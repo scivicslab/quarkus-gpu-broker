@@ -116,7 +116,7 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 ### 未実装（既知）
 - `ProxyResource`/`AsyncJobResource`の`X-Job-Priority`ヘッダー、`RestMulti`によるストリーミング応答実配線を、実際のAIサービス（vLLM等）またはstubに対するIT（`*IT.java`、k8s-dev環境）でまだ検証していない——プロジェクト方針上Docker/DevServices不使用のため、k8s-devへのデプロイが要る（`doc_SCIVICS003`の`e2e_tests`計画を参照）。
 - `PolledResponseSink`が保持する`Content-Type`を`GET`応答へどう反映するかは、`JobResult`のフィールドとしてJSONに含める設計のみで、実際の`AsyncJobResource.fetch`はJackson既定シリアライズに任せている（`JobResult`が`record`なので自動的にフィールドが出力されるが、専用の検証はしていない）。
-- **`AsyncJobResource`経由の`multipart/form-data`ボディが壊れる**（フェーズGで発見）。`POST /jobs/yomitoku-ocr`・`POST /jobs/marker-ocr`へ`-F "file=@..."`で送ると、実サービス側で「fileフィールドが無い」エラーになる（直接サービスへcurlすれば正常）。原因未特定——Quarkusのmultipart自動処理が`byte[] rawBody`パラメータへ渡る前にボディを横取りしている可能性が高い。次セッションで原因調査・別設計文書化が必要。
+- ~~`AsyncJobResource`経由の`multipart/form-data`ボディが壊れる~~ → フェーズGで解決済み（下記参照）
 
 ## フェーズE: CIDR表記対応 ＋ 実機E2E検証（2026-08-10）
 
@@ -171,5 +171,8 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 - [x] `JobQueue`自体は1行も変更なし——`endpointId`という不透明な文字列を扱うだけの既存実装がそのまま動作
 - [x] 新規テスト`AiServiceEndpointConcurrencyTest`: `maxConcurrency=3`の`AiServiceEndpoint`が実際に3件同時実行できることを検証。`mvn install`で38件GREEN
 - [x] 実ネットワーク（192.168.5.0/26）で実起動→discoveryログに`maxConcurrency`が正しく反映されることを確認。vLLMキューへ5件同時にchat completionリクエストを送り、ステータスページで`active: 5`（以前は`active`が常に1固定）を実測——実際に並行実行できることを確認
-- [x] `Marker`パス修正（`/convert`→`/marker/upload`）: 修正自体は正しいが、検証中に**別の重大なバグ**を発見——`AsyncJobResource`経由で`multipart/form-data`のファイルをOCR系サービスへ送ると実サービス側で「fileフィールドが無い」エラーになる。YomiToku・Markerの両方で再現（直接curlすれば動くのに`gpu-broker`経由だと壊れる）。原因は未特定だが、Quarkusのmultipart自動処理がRESTEasy Reactiveの`byte[] rawBody`パラメータへ渡る前にボディを横取りしている可能性が高い。EMBEDDINGは`application/json`ボディのため影響を受けない。**同時実行数制御とは無関係な既存の独立したバグとして、別セッション・別文書で扱う**
+- [x] `Marker`パス修正（`/convert`→`/marker/upload`）: 修正自体は正しいが、検証中に**別の重大なバグ**を発見——`AsyncJobResource`経由で`multipart/form-data`のファイルをOCR系サービスへ送ると実サービス側で「fileフィールドが無い」エラーになる。YomiToku・Markerの両方で再現（直接curlすれば動くのに`gpu-broker`経由だと壊れる）
+- [x] **原因調査**: `AsyncJobResource`が受け取る`byte[] rawBody`自体は、境界文字列・`Content-Disposition`・ファイル内容まで完全な形で正しく捕捉できていることをBase64出力で確認（受信側の問題ではない）。転送側（`HttpAiServiceClient`）を疑い、`HttpClient.newHttpClient()`が既定でHTTP/2 cleartext（h2c）アップグレードを試みる点が原因と特定——YomiToku・Marker・embeddingはいずれもuvicorn（FastAPI）上で動いており、この既定挙動がuvicornへの`multipart/form-data`を壊す。vLLMは別のHTTPサーバー実装のため影響を受けなかった
+- [x] `HttpAiServiceClient`の`HttpClient`を`HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()`でHTTP/1.1固定に修正。`mvn install`（38件GREEN）後、実ネットワークでYomiToku（実PNG画像）・Marker（実PDF）・vLLM（回帰確認）の3つとも`gpu-broker`経由で正常完了することを確認
+- [x] 設計文書（`018_concurrency_control`）に原因・修正・検証結果を追記
 - [x] jar再デプロイ済み。検証後、テスト用brokerプロセスは全て停止済み

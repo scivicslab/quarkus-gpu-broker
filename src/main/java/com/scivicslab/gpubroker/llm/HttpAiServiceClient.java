@@ -26,7 +26,12 @@ public final class HttpAiServiceClient implements AiServiceClient {
 
     private static final int BUFFER_SIZE = 8192;
 
-    private final HttpClient http = HttpClient.newHttpClient();
+    // HTTP/1.1 forced: the default client attempts an h2c (HTTP/2 cleartext) upgrade, which
+    // corrupts multipart/form-data bodies sent to uvicorn/FastAPI backends (YomiToku, Marker,
+    // embedding all are) — the server sees a malformed request and reports the form field missing.
+    private final HttpClient http = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .build();
 
     @Override
     public void send(String address, String path, Job job) throws AiServiceCallException {
