@@ -14,6 +14,7 @@ import java.util.Set;
 
 import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
+import com.scivicslab.gpubroker.model.QueueSnapshot;
 
 /**
  * One capability's queue: a priority deque plus the set of
@@ -104,6 +105,13 @@ public final class JobQueue {
     /** Whether every attached endpoint is idle (nothing currently in flight). */
     public boolean isIdle() {
         return activeEndpointIds.size() == idleEndpointIds.size();
+    }
+
+    /** Current counts for {@code GET /status} — read-only, does not mutate state. */
+    public QueueSnapshot snapshot() {
+        int idle = idleEndpointIds.size();
+        int active = activeEndpointIds.size() - idle;
+        return new QueueSnapshot(active, idle, deque.size());
     }
 
     private String pollIdleEndpoint(Priority priority) {

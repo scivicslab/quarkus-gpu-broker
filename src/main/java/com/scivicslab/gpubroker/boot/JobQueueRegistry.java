@@ -26,6 +26,7 @@ import com.scivicslab.gpubroker.config.EndpointKind;
 import com.scivicslab.gpubroker.llm.AiServiceClient;
 import com.scivicslab.gpubroker.llm.HttpAiServiceClient;
 import com.scivicslab.gpubroker.model.Job;
+import com.scivicslab.gpubroker.model.QueueStatus;
 import com.scivicslab.pojoactor.core.ActorRef;
 import com.scivicslab.pojoactor.core.ActorSystem;
 
@@ -102,6 +103,13 @@ public class JobQueueRegistry {
 
     public ActorRef<JobQueue> get(String queueName) {
         return queues.get(queueName);
+    }
+
+    /** One {@link QueueStatus} per registered queue, for {@code GET /status}. */
+    public List<QueueStatus> statusSnapshot() {
+        return queues.entrySet().stream()
+                .map(e -> new QueueStatus(e.getKey(), e.getValue().ask(JobQueue::snapshot).join()))
+                .toList();
     }
 
     private void registerEndpoint(ActorRef<ROOT> root, String queueName, String address, EndpointKind kind) {

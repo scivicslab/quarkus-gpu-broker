@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
+import com.scivicslab.gpubroker.model.QueueSnapshot;
 import com.scivicslab.gpubroker.model.RecordingResponseSink;
 import com.scivicslab.gpubroker.model.RequestBody;
 
@@ -105,5 +106,22 @@ class JobQueuePriorityTest {
 
         queue.requestWork("e1");   // e1 finished, asks again, nothing left → parks idle
         assertTrue(queue.isIdle());
+    }
+
+    @Test
+    void snapshot_reportsActiveIdleAndPendingCounts() {
+        JobQueue queue = new JobQueue();
+        queue.attach("e1");
+        queue.attach("e2");   // both idle: active=0, idle=2, pending=0
+
+        queue.submit(job(Priority.BACKGROUND, "b1"));   // e1 takes it → active=1, idle=1
+        queue.submit(job(Priority.BACKGROUND, "b2"));   // e2 takes it → active=2, idle=0
+        queue.submit(job(Priority.BACKGROUND, "b3"));   // no idle endpoint → queued
+
+        QueueSnapshot snapshot = queue.snapshot();
+
+        assertEquals(2, snapshot.activeCount());
+        assertEquals(0, snapshot.idleCount());
+        assertEquals(1, snapshot.pendingCount());
     }
 }

@@ -129,3 +129,16 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 - [x] 修正後、実ネットワークへ再デプロイし`POST /queue/vllm-google-gemma-4-26B-A4B-it`（URLエンコード無し）で実vLLMから正常なchat completion応答を確認（`ProxyResource`→`JobQueue`→`AiServiceEndpoint`→`HttpAiServiceClient`→実vLLM→`StreamingResponseSink`/`RestMulti`→クライアント、という設計上の経路全体が実際に動くことを実証）
 - [x] 設計文書（`012_configuration`・`016_endpoint_kinds`・`015_initialization`・`e2e_tests`）へCIDR対応とqueueName安全化を反映
 - [x] 検証後、テスト用brokerプロセスは停止済み
+
+## フェーズF: 読み取り専用ステータスページ `GET /status`（2026-08-10）
+
+`gpu-broker`はAPI専用でブラウザ画面が無く、ブラウザで`localhost:28003`へアクセスすると既定の`404 Resource not found`になる（バグではなく仕様——起動確認は`AI-workspace`のツール一覧かAPIエンドポイントへの直接リクエストで行う）。ただし稼働中に「今どのキューにどれだけ溜まっているか」を目で見る手段が無い点は実際の不便であり、遺伝研スパコンの`job_queue_status`ページ（積み上げ棒グラフ部分のみ）を参考に、読み取り専用のスナップショットページを追加した。設計文書は`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/040_observability/000_QueueSnapshotStatus_260810_oo01`。
+
+- [x] `model/QueueSnapshot`（`activeCount`/`idleCount`/`pendingCount`の`record`）、`model/QueueStatus`（`queueName`＋`QueueSnapshot`）新設
+- [x] `actor/JobQueue.snapshot()`追加（既存フィールドを読むだけの読み取り専用メソッド、`activeCount = activeEndpointIds.size() - idleEndpointIds.size()`）
+- [x] `boot/JobQueueRegistry.statusSnapshot()`追加（登録済み全`JobQueue`へ`ask(JobQueue::snapshot)`し`queueName`と組む）
+- [x] `rest/StatusResource`（`GET /status`、`@Blocking`）＋`rest/StatusPageRenderer`（テンプレートエンジン不使用、素のHTML文字列組み立て。稼働中=赤／空き=緑／待ち行列=青の積み上げ棒、10秒ごと自動更新）新設。「エラー」区分は設けない——`gpu-broker`では失敗ジョブは即座に引き継ぐか再試行上限超過で終端するかのどちらかで、キュー内に留まらないため
+- [x] `mvn install`（34件GREEN）: `JobQueuePriorityTest`に`snapshot_reportsActiveIdleAndPendingCounts`追加、`StatusPageRendererTest`新設（5件、HTMLエスケープ含む）
+- [x] 実ネットワーク（192.168.5.0/26）に対して実起動し、`GET /status`で実際に発見した2キュー（`vllm-google-gemma-4-26B-A4B-it`＝2台、`vllm-Qwen2.5-14B-Instruct-AWQ`＝1台）のidle件数を確認。実チャットリクエストを送信中に同時に`GET /status`を叩き、`active: 1, idle: 1`が実際にリアルタイムで表示されることを確認
+- [x] 設計文書（`e2e_tests`のシナリオ1・6とUnder the Hood）へ、`GET /status`が「Actor treeの状態を外部から確認する手段が無い」という既知の欠落を（集計件数の範囲で）解消したことを反映
+- [x] 検証後、テスト用brokerプロセスは停止済み
