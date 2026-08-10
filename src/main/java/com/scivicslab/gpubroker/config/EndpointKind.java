@@ -35,7 +35,7 @@ public enum EndpointKind {
             return "vllm-" + sanitizeForPathSegment(extractModelName(probeResponseBody));
         }
     },
-    YOMITOKU_OCR(8013, "/health") {
+    YOMITOKU_OCR(8013, "/") {
         @Override
         public AiServiceEndpoint createEndpoint(String queueName, String address, AiServiceClient client) {
             return new YomiTokuOcrEndpoint(queueName, address, client);
@@ -46,7 +46,7 @@ public enum EndpointKind {
             return "yomitoku-ocr";
         }
     },
-    MARKER_OCR(8001, "/health") {
+    MARKER_OCR(8001, "/") {
         @Override
         public AiServiceEndpoint createEndpoint(String queueName, String address, AiServiceClient client) {
             return new MarkerOcrEndpoint(queueName, address, client);
@@ -57,7 +57,7 @@ public enum EndpointKind {
             return "marker-ocr";
         }
     },
-    EMBEDDING(8012, "/health") {
+    EMBEDDING(8012, "/") {
         @Override
         public AiServiceEndpoint createEndpoint(String queueName, String address, AiServiceClient client) {
             return new EmbeddingEndpoint(queueName, address, client);

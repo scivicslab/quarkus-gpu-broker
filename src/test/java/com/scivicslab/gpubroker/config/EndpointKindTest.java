@@ -61,8 +61,13 @@ class EndpointKindTest {
         assertEquals(8000, EndpointKind.VLLM_CHAT.conventionalPort());
         assertEquals("/v1/models", EndpointKind.VLLM_CHAT.probePath());
         assertEquals(8013, EndpointKind.YOMITOKU_OCR.conventionalPort());
+        // Real YomiToku/Marker/embedding deployments report status at "/", not "/health" —
+        // confirmed by probing real nodes; "/health" 404s on all three.
+        assertEquals("/", EndpointKind.YOMITOKU_OCR.probePath());
         assertEquals(8001, EndpointKind.MARKER_OCR.conventionalPort());
+        assertEquals("/", EndpointKind.MARKER_OCR.probePath());
         assertEquals(8012, EndpointKind.EMBEDDING.conventionalPort());
+        assertEquals("/", EndpointKind.EMBEDDING.probePath());
     }
 
     @Test
