@@ -8,10 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import com.scivicslab.gpubroker.actor.EmbeddingEndpoint;
-import com.scivicslab.gpubroker.actor.MarkerOcrEndpoint;
-import com.scivicslab.gpubroker.actor.VllmChatEndpoint;
-import com.scivicslab.gpubroker.actor.YomiTokuOcrEndpoint;
+import com.scivicslab.gpubroker.actor.EmbeddingEndpointWorker;
+import com.scivicslab.gpubroker.actor.MarkerOcrEndpointWorker;
+import com.scivicslab.gpubroker.actor.VllmChatEndpointWorker;
+import com.scivicslab.gpubroker.actor.YomiTokuOcrEndpointWorker;
 import com.scivicslab.gpubroker.llm.AiServiceClient;
 
 @DisplayName("EndpointKind — per-kind queueName derivation and endpoint construction")
@@ -71,14 +71,22 @@ class EndpointKindTest {
     }
 
     @Test
-    void createEndpoint_returnsTheMatchingSubclass() {
-        assertInstanceOf(VllmChatEndpoint.class,
-                EndpointKind.VLLM_CHAT.createEndpoint("q", "addr", NOOP_CLIENT));
-        assertInstanceOf(YomiTokuOcrEndpoint.class,
-                EndpointKind.YOMITOKU_OCR.createEndpoint("q", "addr", NOOP_CLIENT));
-        assertInstanceOf(MarkerOcrEndpoint.class,
-                EndpointKind.MARKER_OCR.createEndpoint("q", "addr", NOOP_CLIENT));
-        assertInstanceOf(EmbeddingEndpoint.class,
-                EndpointKind.EMBEDDING.createEndpoint("q", "addr", NOOP_CLIENT));
+    void createWorker_returnsTheMatchingSubclass() {
+        assertInstanceOf(VllmChatEndpointWorker.class,
+                EndpointKind.VLLM_CHAT.createWorker("q", "addr", NOOP_CLIENT));
+        assertInstanceOf(YomiTokuOcrEndpointWorker.class,
+                EndpointKind.YOMITOKU_OCR.createWorker("q", "addr", NOOP_CLIENT));
+        assertInstanceOf(MarkerOcrEndpointWorker.class,
+                EndpointKind.MARKER_OCR.createWorker("q", "addr", NOOP_CLIENT));
+        assertInstanceOf(EmbeddingEndpointWorker.class,
+                EndpointKind.EMBEDDING.createWorker("q", "addr", NOOP_CLIENT));
+    }
+
+    @Test
+    void eachKind_hasADefaultMaxConcurrency() {
+        assertEquals(32, EndpointKind.VLLM_CHAT.defaultMaxConcurrency());
+        assertEquals(1, EndpointKind.YOMITOKU_OCR.defaultMaxConcurrency());
+        assertEquals(1, EndpointKind.MARKER_OCR.defaultMaxConcurrency());
+        assertEquals(8, EndpointKind.EMBEDDING.defaultMaxConcurrency());
     }
 }

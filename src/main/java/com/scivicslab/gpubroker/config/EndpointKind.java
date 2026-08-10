@@ -3,69 +3,92 @@ package com.scivicslab.gpubroker.config;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.scivicslab.gpubroker.actor.AiServiceEndpoint;
-import com.scivicslab.gpubroker.actor.EmbeddingEndpoint;
-import com.scivicslab.gpubroker.actor.MarkerOcrEndpoint;
-import com.scivicslab.gpubroker.actor.VllmChatEndpoint;
-import com.scivicslab.gpubroker.actor.YomiTokuOcrEndpoint;
+import com.scivicslab.gpubroker.actor.AiServiceEndpointWorker;
+import com.scivicslab.gpubroker.actor.EmbeddingEndpointWorker;
+import com.scivicslab.gpubroker.actor.MarkerOcrEndpointWorker;
+import com.scivicslab.gpubroker.actor.VllmChatEndpointWorker;
+import com.scivicslab.gpubroker.actor.YomiTokuOcrEndpointWorker;
 import com.scivicslab.gpubroker.llm.AiServiceClient;
 
 /**
  * Every AI service kind the broker knows how to discover and talk to. Each
- * constant carries the two things needed to probe for it (conventional
- * port, probe path) and, as constant-specific bodies, the two things that
- * genuinely vary in behavior rather than data: which {@code
- * AiServiceEndpoint} subclass to build once a probe succeeds, and how to
- * derive that endpoint's {@code queueName} from the probe response.
+ * constant carries the things needed to probe for it (conventional port,
+ * probe path) and, as constant-specific bodies, the things that genuinely
+ * vary in behavior rather than data: which {@code AiServiceEndpointWorker}
+ * subclass to build once a probe succeeds, how to derive that endpoint's
+ * {@code queueName} from the probe response, and a default concurrency
+ * ceiling for that kind (overridable per deployment — see {@code
+ * 018_concurrency_control/000_PerEndpointConcurrency_260810_oo01}).
  *
- * <p>{@code queueName} derivation lives here, not on {@code AiServiceEndpoint},
- * because it has to run before an endpoint instance exists — {@code
- * queueName} is one of that instance's own constructor arguments.
+ * <p>{@code queueName} derivation lives here, not on {@code
+ * AiServiceEndpointWorker}, because it has to run before an endpoint
+ * instance exists — {@code queueName} is one of that instance's own
+ * constructor arguments.
  */
 public enum EndpointKind {
 
     VLLM_CHAT(8000, "/v1/models") {
         @Override
-        public AiServiceEndpoint createEndpoint(String queueName, String address, AiServiceClient client) {
-            return new VllmChatEndpoint(queueName, address, client);
+        public AiServiceEndpointWorker createWorker(String queueName, String address, AiServiceClient client) {
+            return new VllmChatEndpointWorker(queueName, address, client);
         }
 
         @Override
         public String deriveQueueName(String probeResponseBody) {
             return "vllm-" + sanitizeForPathSegment(extractModelName(probeResponseBody));
         }
+
+        @Override
+        public int defaultMaxConcurrency() {
+            return 32;   // safety bound, not a performance-tuned value — vLLM's own KV cache admits/queues internally
+        }
     },
     YOMITOKU_OCR(8013, "/") {
         @Override
-        public AiServiceEndpoint createEndpoint(String queueName, String address, AiServiceClient client) {
-            return new YomiTokuOcrEndpoint(queueName, address, client);
+        public AiServiceEndpointWorker createWorker(String queueName, String address, AiServiceClient client) {
+            return new YomiTokuOcrEndpointWorker(queueName, address, client);
         }
 
         @Override
         public String deriveQueueName(String probeResponseBody) {
             return "yomitoku-ocr";
         }
+
+        @Override
+        public int defaultMaxConcurrency() {
+            return 1;   // no measured benefit on the currently deployed GPU — not a proven architectural ceiling
+        }
     },
     MARKER_OCR(8001, "/") {
         @Override
-        public AiServiceEndpoint createEndpoint(String queueName, String address, AiServiceClient client) {
-            return new MarkerOcrEndpoint(queueName, address, client);
+        public AiServiceEndpointWorker createWorker(String queueName, String address, AiServiceClient client) {
+            return new MarkerOcrEndpointWorker(queueName, address, client);
         }
 
         @Override
         public String deriveQueueName(String probeResponseBody) {
             return "marker-ocr";
         }
+
+        @Override
+        public int defaultMaxConcurrency() {
+            return 1;   // measured intermittent 500 under 2 concurrent requests — a reliability constraint, not tuning
+        }
     },
     EMBEDDING(8012, "/") {
         @Override
-        public AiServiceEndpoint createEndpoint(String queueName, String address, AiServiceClient client) {
-            return new EmbeddingEndpoint(queueName, address, client);
+        public AiServiceEndpointWorker createWorker(String queueName, String address, AiServiceClient client) {
+            return new EmbeddingEndpointWorker(queueName, address, client);
         }
 
         @Override
         public String deriveQueueName(String probeResponseBody) {
             return "embedding-e5large";
+        }
+
+        @Override
+        public int defaultMaxConcurrency() {
+            return 8;   // measured 30 concurrent with no errors; kept conservative below that
         }
     };
 
@@ -87,9 +110,12 @@ public enum EndpointKind {
         return probePath;
     }
 
-    public abstract AiServiceEndpoint createEndpoint(String queueName, String address, AiServiceClient client);
+    public abstract AiServiceEndpointWorker createWorker(String queueName, String address, AiServiceClient client);
 
     public abstract String deriveQueueName(String probeResponseBody);
+
+    /** Default {@code maxConcurrency} for this kind; deployments may override via {@code broker.max-concurrency.<KIND>}. */
+    public abstract int defaultMaxConcurrency();
 
     /** Extract the first model id out of an OpenAI-compatible {@code /v1/models} response. */
     static String extractModelName(String probeResponseBody) {

@@ -17,12 +17,12 @@ import com.scivicslab.pojoactor.core.ActorRef;
 import com.scivicslab.pojoactor.core.ActorSystem;
 
 /**
- * Each {@code AiServiceEndpoint} pulls one job, blocks until it completes,
+ * Each {@code AiServiceEndpointWorker} pulls one job, blocks until it completes,
  * then pulls the next. With two endpoints, a third submitted job cannot
  * start until one frees up (completion-driven, N=1), and a foreground job
  * submitted under load overtakes a waiting background job at dispatch time.
  */
-@DisplayName("AiServiceEndpoint dispatch — completion-driven pull with N=1")
+@DisplayName("AiServiceEndpointWorker dispatch — completion-driven pull with N=1")
 class CompletionDrivenDispatchTest {
 
     private static Job job(Priority priority, String label) {
@@ -30,13 +30,13 @@ class CompletionDrivenDispatchTest {
                 priority, new RecordingResponseSink());
     }
 
-    /** Create an AiServiceEndpoint, bind its self-reference, and have it enter the idle set. */
+    /** Create an AiServiceEndpointWorker, bind its self-reference, and have it enter the idle set. */
     private static void spawnEndpoint(ActorSystem system, ActorRef<JobQueue> queue,
                                       LatchAiServiceClient client, String address) {
-        AiServiceEndpoint endpoint = new VllmChatEndpoint(queue.getName(), address, client);
-        ActorRef<AiServiceEndpoint> ref = system.actorOf(address, endpoint);
+        AiServiceEndpointWorker endpoint = new VllmChatEndpointWorker(queue.getName(), address, client);
+        ActorRef<AiServiceEndpointWorker> ref = system.actorOf(address, endpoint);
         ref.tell(e -> e.bind(system, ref)).join();   // bind self before start
-        ref.tell(AiServiceEndpoint::start);          // enter idle → requestWork
+        ref.tell(AiServiceEndpointWorker::start);          // enter idle → requestWork
     }
 
     /**
@@ -48,7 +48,7 @@ class CompletionDrivenDispatchTest {
     private static void submitAndDispatch(ActorSystem system, ActorRef<JobQueue> queue, Job job) throws Exception {
         String endpointId = queue.ask(q -> q.submit(job)).get();
         if (endpointId != null) {
-            ActorRef<AiServiceEndpoint> endpoint = system.getActor(endpointId);
+            ActorRef<AiServiceEndpointWorker> endpoint = system.getActor(endpointId);
             endpoint.tell(w -> w.assign(job));
         }
     }

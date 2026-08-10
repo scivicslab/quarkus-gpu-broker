@@ -1,6 +1,6 @@
 package com.scivicslab.gpubroker.rest;
 
-import com.scivicslab.gpubroker.actor.AiServiceEndpoint;
+import com.scivicslab.gpubroker.actor.AiServiceEndpointWorker;
 import com.scivicslab.gpubroker.actor.JobQueue;
 import com.scivicslab.gpubroker.boot.DrainingException;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
@@ -89,7 +89,7 @@ public class ProxyResource {
     }
 
     private void dispatch(String endpointId, Job job) {
-        ActorRef<AiServiceEndpoint> endpoint = system.getActor(endpointId);
-        endpoint.tell(w -> w.assign(job));
+        ActorRef<AiServiceEndpointWorker> worker = system.getActor(endpointId);
+        worker.tell(w -> w.assign(job));
     }
 }

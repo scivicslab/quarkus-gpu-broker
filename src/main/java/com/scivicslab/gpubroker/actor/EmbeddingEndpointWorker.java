@@ -3,9 +3,9 @@ package com.scivicslab.gpubroker.actor;
 import com.scivicslab.gpubroker.llm.AiServiceClient;
 
 /** The embedding server's endpoint. */
-public final class EmbeddingEndpoint extends AiServiceEndpoint {
+public final class EmbeddingEndpointWorker extends AiServiceEndpointWorker {
 
-    public EmbeddingEndpoint(String queueName, String address, AiServiceClient client) {
+    public EmbeddingEndpointWorker(String queueName, String address, AiServiceClient client) {
         super(queueName, address, client);
     }
 

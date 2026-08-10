@@ -18,30 +18,30 @@ import com.scivicslab.pojoactor.core.ActorRef;
 import com.scivicslab.pojoactor.core.ActorSystem;
 
 /**
- * A failing {@code AiServiceEndpoint} does not lose the job: {@code
- * AiServiceEndpoint.requeue} hands it to whichever endpoint is (or later
+ * A failing {@code AiServiceEndpointWorker} does not lose the job: {@code
+ * AiServiceEndpointWorker.requeue} hands it to whichever endpoint is (or later
  * becomes) idle. A permanently failing endpoint does not retry forever
  * either — {@code MAX_ATTEMPTS} bounds it, and the {@code ResponseSink} is
  * failed explicitly once exhausted.
  */
-@DisplayName("AiServiceEndpoint failure handling — requeue and retry limit")
+@DisplayName("AiServiceEndpointWorker failure handling — requeue and retry limit")
 class HealthAwareNodeSetTest {
 
     private static Job job(String label, RecordingResponseSink sink) {
         return Job.first(new RequestBody(label.getBytes(StandardCharsets.UTF_8), "text/plain"), Priority.BACKGROUND, sink);
     }
 
-    private static void spawnEndpoint(ActorSystem system, ActorRef<JobQueue> queue, AiServiceEndpoint endpoint, String address) {
-        ActorRef<AiServiceEndpoint> ref = system.actorOf(address, endpoint);
+    private static void spawnEndpoint(ActorSystem system, ActorRef<JobQueue> queue, AiServiceEndpointWorker endpoint, String address) {
+        ActorRef<AiServiceEndpointWorker> ref = system.actorOf(address, endpoint);
         ref.tell(e -> e.bind(system, ref)).join();   // bind self before start
-        ref.tell(AiServiceEndpoint::start);          // enter idle → requestWork
+        ref.tell(AiServiceEndpointWorker::start);          // enter idle → requestWork
     }
 
     /** Same submit-then-dispatch pattern ProxyResource/AsyncJobResource use. */
     private static void submitAndDispatch(ActorSystem system, ActorRef<JobQueue> queue, Job job) throws Exception {
         String endpointId = queue.ask(q -> q.submit(job)).get();
         if (endpointId != null) {
-            ActorRef<AiServiceEndpoint> endpoint = system.getActor(endpointId);
+            ActorRef<AiServiceEndpointWorker> endpoint = system.getActor(endpointId);
             endpoint.tell(w -> w.assign(job));
         }
     }
@@ -63,12 +63,12 @@ class HealthAwareNodeSetTest {
         client.markUnhealthy("bad");
         ActorRef<JobQueue> queue = system.actorOf("queue", new JobQueue());
 
-        spawnEndpoint(system, queue, new VllmChatEndpoint(queue.getName(), "bad", client), "bad");
+        spawnEndpoint(system, queue, new VllmChatEndpointWorker(queue.getName(), "bad", client), "bad");
 
         RecordingResponseSink sink = new RecordingResponseSink();
         submitAndDispatch(system, queue, job("j1", sink));   // the only endpoint so far → fails → requeues into the deque
 
-        spawnEndpoint(system, queue, new VllmChatEndpoint(queue.getName(), "good", client), "good");   // now free to pick it up
+        spawnEndpoint(system, queue, new VllmChatEndpointWorker(queue.getName(), "good", client), "good");   // now free to pick it up
 
         awaitOutcome(sink);
         assertTrue(sink.isCompleted());
@@ -85,7 +85,7 @@ class HealthAwareNodeSetTest {
         client.markUnhealthy("bad");
         ActorRef<JobQueue> queue = system.actorOf("queue", new JobQueue());
 
-        spawnEndpoint(system, queue, new VllmChatEndpoint(queue.getName(), "bad", client), "bad");   // the only endpoint, ever
+        spawnEndpoint(system, queue, new VllmChatEndpointWorker(queue.getName(), "bad", client), "bad");   // the only endpoint, ever
 
         RecordingResponseSink sink = new RecordingResponseSink();
         submitAndDispatch(system, queue, job("j1", sink));

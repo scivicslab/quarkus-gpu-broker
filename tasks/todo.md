@@ -116,6 +116,7 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 ### 未実装（既知）
 - `ProxyResource`/`AsyncJobResource`の`X-Job-Priority`ヘッダー、`RestMulti`によるストリーミング応答実配線を、実際のAIサービス（vLLM等）またはstubに対するIT（`*IT.java`、k8s-dev環境）でまだ検証していない——プロジェクト方針上Docker/DevServices不使用のため、k8s-devへのデプロイが要る（`doc_SCIVICS003`の`e2e_tests`計画を参照）。
 - `PolledResponseSink`が保持する`Content-Type`を`GET`応答へどう反映するかは、`JobResult`のフィールドとしてJSONに含める設計のみで、実際の`AsyncJobResource.fetch`はJackson既定シリアライズに任せている（`JobResult`が`record`なので自動的にフィールドが出力されるが、専用の検証はしていない）。
+- **`AsyncJobResource`経由の`multipart/form-data`ボディが壊れる**（フェーズGで発見）。`POST /jobs/yomitoku-ocr`・`POST /jobs/marker-ocr`へ`-F "file=@..."`で送ると、実サービス側で「fileフィールドが無い」エラーになる（直接サービスへcurlすれば正常）。原因未特定——Quarkusのmultipart自動処理が`byte[] rawBody`パラメータへ渡る前にボディを横取りしている可能性が高い。次セッションで原因調査・別設計文書化が必要。
 
 ## フェーズE: CIDR表記対応 ＋ 実機E2E検証（2026-08-10）
 
@@ -152,3 +153,23 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 - [x] 実ネットワークで再検証: `Qwen2.5-14B-Instruct-AWQ`が`192.168.5.14:8000`にあることをページ上で確認。実チャットリクエスト送信中に`192.168.5.17:8000`が`(active)`と表示されることも確認
 - [x] 設計文書（`040_observability`・`e2e_tests`）を更新——`e2e_tests`の「集計件数のみでアドレスは示さない」という記述はこの変更で誤りになったため修正
 - [x] jar再デプロイ済み。検証後、テスト用brokerプロセスは停止済み
+
+## フェーズG: AiServiceEndpointあたりの同時実行数制御（2026-08-10）
+
+`AiServiceEndpoint.assign`が自分のアクタースレッドで同期的にブロックする構造上、1つの`AiServiceEndpoint`は常にN=1（同時1件）しかジョブを処理できなかった。この制約は「アクターモデルから自動的にそうなる」という理由だけで採用されており、vLLMのcontinuous batchingの恩恵を一切使えていなかった（過去の実タスクで8並列が明確に速かった実績あり）。ユーザー提案の「`AiServiceEndpoint`の子として同時実行数ぶんの`AiServiceEndpointWorker`を作る」方式で、`JobQueue`を一切変更せずに解決した。設計文書は`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/018_concurrency_control/000_PerEndpointConcurrency_260810_oo01`。
+
+- [x] 実装前に、YomiToku OCR・Marker OCR・embeddingの3種別についても「未確認だから保守的にN=1」で済ませず、実ノードへ直接並行リクエストを送って実測（`調べればいいだけ`という指摘を受けて）:
+  - `EMBEDDING`: 30並列で全件`200`、1件あたりコストもほぼ一定 → 安全
+  - `YOMITOKU_OCR`: 実PDFページで3並列(6.8s) vs 3逐次(7.4s) → ほぼ恩恵なし。**ただしこれは現在のRTX 4080というこの1台の実測であり、YomiToku OCRが原理的に並行化の恩恵を受けられないという結論ではない**、という指摘を受けドキュメントに明記
+  - `MARKER_OCR`: 実PDFページを2並列で2回試行 → 1回目は1件が`500`（間欠的失敗）→ 危険、N=1を維持
+  - 副産物として`MarkerOcrEndpoint.requestPath()`の`/convert`が実サービスに存在しない（`404`）ことも発覚（正しくは`/marker/upload`）——同時実行数とは無関係な別バグとして扱う
+- [x] `actor/AiServiceEndpointWorker`新設（旧`AiServiceEndpoint`のbodyをそのまま移動、ロジック不変）。`VllmChatEndpointWorker`/`YomiTokuOcrEndpointWorker`/`MarkerOcrEndpointWorker`/`EmbeddingEndpointWorker`に改名
+- [x] `actor/AiServiceEndpoint`を薄い「物理サービス＋Worker工場」に書き換え（`address`・`maxConcurrency`・`Supplier<AiServiceEndpointWorker>`のみ保持、`start()`で`address#0..N-1`という名前の子Workerを`maxConcurrency`個生成）——抽象クラスではなくなった
+- [x] `config/EndpointKind`: `createEndpoint`→`createWorker`に改名（戻り値`AiServiceEndpointWorker`）、`defaultMaxConcurrency()`追加（`VLLM_CHAT=32`・`EMBEDDING=8`・`YOMITOKU_OCR=1`・`MARKER_OCR=1`、実測に基づく既定値。`conventionalPort`/`probePath`と違いデプロイごとに`broker.max-concurrency.<KIND>`で上書き可能——protocol上の固定事実ではなく調整可能なチューニング値として設計）
+- [x] `boot/JobQueueRegistry.registerEndpoint`: `resolveMaxConcurrency`追加（`ConfigProvider`で動的に読む、`@ConfigProperty`の compile-time literal 制約を回避）
+- [x] `rest/ProxyResource`・`rest/AsyncJobResource`の`dispatch`を`ActorRef<AiServiceEndpointWorker>`へ変更（`JobQueue`が返す`endpointId`は今はWorkerの識別子のため）
+- [x] `JobQueue`自体は1行も変更なし——`endpointId`という不透明な文字列を扱うだけの既存実装がそのまま動作
+- [x] 新規テスト`AiServiceEndpointConcurrencyTest`: `maxConcurrency=3`の`AiServiceEndpoint`が実際に3件同時実行できることを検証。`mvn install`で38件GREEN
+- [x] 実ネットワーク（192.168.5.0/26）で実起動→discoveryログに`maxConcurrency`が正しく反映されることを確認。vLLMキューへ5件同時にchat completionリクエストを送り、ステータスページで`active: 5`（以前は`active`が常に1固定）を実測——実際に並行実行できることを確認
+- [x] `Marker`パス修正（`/convert`→`/marker/upload`）: 修正自体は正しいが、検証中に**別の重大なバグ**を発見——`AsyncJobResource`経由で`multipart/form-data`のファイルをOCR系サービスへ送ると実サービス側で「fileフィールドが無い」エラーになる。YomiToku・Markerの両方で再現（直接curlすれば動くのに`gpu-broker`経由だと壊れる）。原因は未特定だが、Quarkusのmultipart自動処理がRESTEasy Reactiveの`byte[] rawBody`パラメータへ渡る前にボディを横取りしている可能性が高い。EMBEDDINGは`application/json`ボディのため影響を受けない。**同時実行数制御とは無関係な既存の独立したバグとして、別セッション・別文書で扱う**
+- [x] jar再デプロイ済み。検証後、テスト用brokerプロセスは全て停止済み

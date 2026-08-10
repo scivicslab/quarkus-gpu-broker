@@ -15,11 +15,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import com.scivicslab.gpubroker.actor.AiServiceEndpoint;
+import com.scivicslab.gpubroker.actor.AiServiceEndpointWorker;
 import com.scivicslab.gpubroker.actor.JobQueue;
 import com.scivicslab.gpubroker.actor.ROOT;
 import com.scivicslab.gpubroker.config.EndpointKind;
@@ -115,11 +118,21 @@ public class JobQueueRegistry {
     private void registerEndpoint(ActorRef<ROOT> root, String queueName, String address, EndpointKind kind) {
         ActorRef<JobQueue> queue = queues.computeIfAbsent(queueName, n -> root.createChild(n, new JobQueue()));
         AiServiceClient client = new HttpAiServiceClient();
-        AiServiceEndpoint endpoint = kind.createEndpoint(queueName, address, client);
+        int maxConcurrency = resolveMaxConcurrency(kind);
+        Supplier<AiServiceEndpointWorker> workerFactory = () -> kind.createWorker(queueName, address, client);
+        AiServiceEndpoint endpoint = new AiServiceEndpoint(address, maxConcurrency, workerFactory);
         ActorRef<AiServiceEndpoint> endpointRef = queue.createChild(address, endpoint);
         endpointRef.tell(e -> e.bind(system, endpointRef));
         endpointRef.tell(AiServiceEndpoint::start);
-        LOG.infof("discovered %s at %s -> queue %s", kind, address, queueName);
+        LOG.infof("discovered %s at %s -> queue %s (maxConcurrency=%d)", kind, address, queueName, maxConcurrency);
+    }
+
+    /** {@code broker.max-concurrency.<KIND>} overrides {@link EndpointKind#defaultMaxConcurrency()} — a deployment
+     *  tuning value, not a protocol fact, so it is read dynamically rather than via a compile-time {@code @ConfigProperty}. */
+    private int resolveMaxConcurrency(EndpointKind kind) {
+        return ConfigProvider.getConfig()
+                .getOptionalValue("broker.max-concurrency." + kind.name(), Integer.class)
+                .orElse(kind.defaultMaxConcurrency());
     }
 
     private void awaitIdle(Duration timeout) {
