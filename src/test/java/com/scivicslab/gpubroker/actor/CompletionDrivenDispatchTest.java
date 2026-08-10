@@ -4,81 +4,103 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.charset.StandardCharsets;
+
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import com.scivicslab.gpubroker.model.Job;
+import com.scivicslab.gpubroker.model.Priority;
+import com.scivicslab.gpubroker.model.RecordingResponseSink;
+import com.scivicslab.gpubroker.model.RequestBody;
 import com.scivicslab.pojoactor.core.ActorRef;
 import com.scivicslab.pojoactor.core.ActorSystem;
 
 /**
- * S_dispatch: each NodeActor pulls one job, blocks until it completes, then
- * pulls the next. With two nodes, a third submitted job cannot start until a
- * node frees up (completion-driven, N=1), and a foreground job submitted under
- * load overtakes a waiting background job at dispatch time.
+ * Each {@code AiServiceEndpoint} pulls one job, blocks until it completes,
+ * then pulls the next. With two endpoints, a third submitted job cannot
+ * start until one frees up (completion-driven, N=1), and a foreground job
+ * submitted under load overtakes a waiting background job at dispatch time.
  */
-@Tag("S_dispatch")
-@DisplayName("CompletionDrivenDispatch — completion-driven pull with N=1 (S_dispatch)")
+@DisplayName("AiServiceEndpoint dispatch — completion-driven pull with N=1")
 class CompletionDrivenDispatchTest {
 
-    /** Create a NodeActor, bind its self-reference, and have it enter the idle set. */
-    private static void spawnNode(ActorSystem system, ActorRef<QueueActor> queue,
-                                  LatchUpstream upstream, String name) {
-        NodeActor node = new NodeActor(name, queue, upstream);
-        ActorRef<NodeActor> ref = system.actorOf(name, node);
-        ref.tell(n -> n.bind(ref)).join();   // bind self before start
-        ref.tell(NodeActor::start);          // enter idle → requestWork
+    private static Job job(Priority priority, String label) {
+        return Job.first(new RequestBody(label.getBytes(StandardCharsets.UTF_8), "text/plain"),
+                priority, new RecordingResponseSink());
+    }
+
+    /** Create an AiServiceEndpoint, bind its self-reference, and have it enter the idle set. */
+    private static void spawnEndpoint(ActorSystem system, ActorRef<JobQueue> queue,
+                                      LatchAiServiceClient client, String address) {
+        AiServiceEndpoint endpoint = new VllmChatEndpoint(queue.getName(), address, client);
+        ActorRef<AiServiceEndpoint> ref = system.actorOf(address, endpoint);
+        ref.tell(e -> e.bind(system, ref)).join();   // bind self before start
+        ref.tell(AiServiceEndpoint::start);          // enter idle → requestWork
+    }
+
+    /**
+     * Exactly what {@code ProxyResource}/{@code AsyncJobResource} do:
+     * {@code JobQueue} never tells anyone itself, so the caller of {@code
+     * submit} must dispatch to the returned {@code endpointId} if one comes
+     * back immediately (an already-idle endpoint waiting for work).
+     */
+    private static void submitAndDispatch(ActorSystem system, ActorRef<JobQueue> queue, Job job) throws Exception {
+        String endpointId = queue.ask(q -> q.submit(job)).get();
+        if (endpointId != null) {
+            ActorRef<AiServiceEndpoint> endpoint = system.getActor(endpointId);
+            endpoint.tell(w -> w.assign(job));
+        }
     }
 
     @Test
-    void thirdJob_waitsUntilANodeCompletes() throws Exception {
+    void thirdJob_waitsUntilAnEndpointCompletes() throws Exception {
         ActorSystem system = new ActorSystem("broker-dispatch-test");
-        LatchUpstream upstream = new LatchUpstream();
-        ActorRef<QueueActor> queue = system.actorOf("queue", new QueueActor());
-        spawnNode(system, queue, upstream, "node-a");
-        spawnNode(system, queue, upstream, "node-b");
+        LatchAiServiceClient client = new LatchAiServiceClient();
+        ActorRef<JobQueue> queue = system.actorOf("queue", new JobQueue());
+        spawnEndpoint(system, queue, client, "node-a");
+        spawnEndpoint(system, queue, client, "node-b");
 
-        queue.tell(q -> q.submit(Job.bg("j1")));
-        queue.tell(q -> q.submit(Job.bg("j2")));
-        queue.tell(q -> q.submit(Job.bg("j3")));
+        submitAndDispatch(system, queue, job(Priority.BACKGROUND, "j1"));
+        submitAndDispatch(system, queue, job(Priority.BACKGROUND, "j2"));
+        submitAndDispatch(system, queue, job(Priority.BACKGROUND, "j3"));
 
-        upstream.awaitStarted("j1");
-        upstream.awaitStarted("j2");                       // both nodes processing
-        assertFalse(upstream.isStarted("j3"));             // no free node → j3 waits in the deque
-        assertEquals(1, upstream.maxConcurrentPerNode());  // N=1: no node runs two at once
+        client.awaitStarted("j1");
+        client.awaitStarted("j2");                       // both endpoints processing
+        assertFalse(client.isStarted("j3"));             // no free endpoint → j3 waits in the deque
+        assertEquals(1, client.maxConcurrentPerAddress()); // N=1: no endpoint runs two at once
 
-        upstream.complete("j1");                           // one node completes → it requestWork
-        upstream.awaitStarted("j3");                       // j3 is now dispatched
-        assertTrue(upstream.isStarted("j3"));
-        assertEquals(1, upstream.maxConcurrentPerNode());  // still N=1 after re-dispatch
+        client.complete("j1");                           // one endpoint completes → it requestWork
+        client.awaitStarted("j3");                       // j3 is now dispatched
+        assertTrue(client.isStarted("j3"));
+        assertEquals(1, client.maxConcurrentPerAddress()); // still N=1 after re-dispatch
 
-        upstream.completeAll();
+        client.completeAll();
         system.terminate();
     }
 
     @Test
     void foregroundSubmittedUnderLoad_overtakesWaitingBackground() throws Exception {
         ActorSystem system = new ActorSystem("broker-dispatch-fg-test");
-        LatchUpstream upstream = new LatchUpstream();
-        ActorRef<QueueActor> queue = system.actorOf("queue", new QueueActor());
-        spawnNode(system, queue, upstream, "node-a");
-        spawnNode(system, queue, upstream, "node-b");
+        LatchAiServiceClient client = new LatchAiServiceClient();
+        ActorRef<JobQueue> queue = system.actorOf("queue", new JobQueue());
+        spawnEndpoint(system, queue, client, "node-a");
+        spawnEndpoint(system, queue, client, "node-b");
 
-        queue.tell(q -> q.submit(Job.bg("b1")));           // fills node 1
-        queue.tell(q -> q.submit(Job.bg("b2")));           // fills node 2
-        upstream.awaitStarted("b1");
-        upstream.awaitStarted("b2");                       // both nodes busy
+        submitAndDispatch(system, queue, job(Priority.BACKGROUND, "b1"));   // fills endpoint 1
+        submitAndDispatch(system, queue, job(Priority.BACKGROUND, "b2"));   // fills endpoint 2
+        client.awaitStarted("b1");
+        client.awaitStarted("b2");                       // both endpoints busy
 
-        queue.tell(q -> q.submit(Job.bg("b3")));           // waits in deque (back)
-        queue.tell(q -> q.submit(Job.fg("f1"))).join();    // FG → front, ahead of b3
+        submitAndDispatch(system, queue, job(Priority.BACKGROUND, "b3"));  // waits in deque (back)
+        submitAndDispatch(system, queue, job(Priority.FOREGROUND, "f1"));  // FG → front, ahead of b3
 
-        upstream.complete("b1");                           // a node frees up
-        upstream.awaitStarted("f1");                       // FG is dispatched first
-        assertTrue(upstream.isStarted("f1"));
-        assertFalse(upstream.isStarted("b3"));             // BG still waiting behind FG
+        client.complete("b1");                           // an endpoint frees up
+        client.awaitStarted("f1");                       // FG is dispatched first
+        assertTrue(client.isStarted("f1"));
+        assertFalse(client.isStarted("b3"));              // BG still waiting behind FG
 
-        upstream.completeAll();
+        client.completeAll();
         system.terminate();
     }
 }

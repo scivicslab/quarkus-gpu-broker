@@ -91,3 +91,28 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 
 ### 既知の警告（無害）
 - `mvn verify` 実行 JVM が Java 24 のため、テスト合格後のシャットダウン中に jboss-threads の `IllegalAccessError: ... java.base does not open java.lang`（thread-local reset）が出る。テスト結果には影響しない。消すなら failsafe の argLine に `--add-opens java.base/java.lang=ALL-UNNAMED` を追加するか Java 21 で実行する。
+
+## フェーズD: 全面再設計（2026-08-10、`doc_SCIVICS003/docs/quarkus-gpu-broker`準拠）
+
+単一vLLM前提のプロトタイプ（`QueueActor`/`NodeActor`/`GatewayActors`/`ChatCompletionsResource`）を、複数AIサービス種別（vLLM chat・YomiToku OCR・Marker OCR・embedding）・優先度予約・再試行上限・非同期submit-then-poll・graceful drainに対応した設計へ全面書き換え。着手前に`git init`しコミット（`297759a`）してから実施。設計文書は`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/`配下の各ディレクトリに対応。
+
+- [x] `model`: `Job`（`RequestBody`/`Priority`/`ResponseSink`/`attempt`を持つ`record`、`nextAttempt()`）、`ResponseSink`（`start`/`emit`/`complete`/`fail`）、`RequestBody`新設
+- [x] `actor`: `QueueActor`→`JobQueue`（`ActorRef`フィールド無し、FG予約`reservedUntil`、`drainPending`/`isIdle`）、`ROOT`新設、`NodeActor`→`AiServiceEndpoint`抽象＋`VllmChatEndpoint`/`YomiTokuOcrEndpoint`/`MarkerOcrEndpoint`/`EmbeddingEndpoint`
+- [x] `config`（新設）: `EndpointKind`（定数ごとの本体で`createEndpoint`/`deriveQueueName`）
+- [x] `llm`: `UpstreamLlmClient`系→`AiServiceClient`系に改名、`send(address, path, job)`が`ResponseSink`の`start`/`emit`/`complete`を呼ぶ形に
+- [x] `response`（新設）: `StreamStart`、`StreamingResponseSink`（`UnicastProcessor`＋`UniEmitter`）、`PolledResponseSink`、`JobResult`（`contentType`付き）、`JobResultStore`（`@Scheduled`でTTL掃除）
+- [x] `boot`: `GatewayActors`→`ActorSystemProducer`＋`JobQueueRegistry`（ノード×`EndpointKind`探査、`draining`フラグ、`ShutdownEvent`での排出）
+- [x] `rest`: `ChatCompletionsResource`→`ProxyResource`（`RestMulti.fromUniResponse`で`Content-Type`確定後にストリーミング開始）、`AsyncJobResource`新設
+- [x] `pom.xml`: `quarkus-scheduler`追加（`quarkus-config-yaml`は`broker.nodes`が単純リストのため不要と判断し追加せず）
+- [x] テスト全面書き換え（`mvn install` GREEN、20件）: `JobQueuePriorityTest`（優先度・予約・drain）、`CompletionDrivenDispatchTest`（N=1・完了駆動）、`HealthAwareNodeSetTest`（requeue・再試行上限）、`EndpointKindTest`（`queueName`導出）、`JobResultStoreTest`（TTL掃除）
+- [x] `mvn install`・実起動・`curl`スモークテスト（`/queue/{存在しない}`・`/jobs/{存在しない}`が`404`）で確認
+
+### 実装で見つかった設計文書との齟齬（要フィードバック）
+1. **`system.getActor(name)`への直接キャストはコンパイルエラー**。`<T> ActorRef<T> getActor(String)`はジェネリックメソッドであり、`(ActorRef<X>) system.getActor(name)`は`ActorRef<Object>`→`ActorRef<X>`の不正な変換になる。正しくは代入先の型でinferさせる（`ActorRef<X> ref = system.getActor(name);`、キャスト・`@SuppressWarnings`とも不要）。設計文書側のコード例（`AiServiceEndpoint`・`ProxyResource`等の`wake`/`dispatch`）を要修正。
+2. **`ProxyResource`の`Uni.createFrom().emitter`内で`.join()`はブロッキングバグ**。emitterのconsumerはI/Oスレッド（Vert.xイベントループ）で動く可能性があり、`queue.ask(...).join()`はイベントループを止めうる。`queue.ask(q -> q.submit(job)).thenAccept(endpointId -> {...})`という非ブロッキング合成に変更。設計文書側も要修正。
+3. **`broker.nodes`は`Optional<List<String>>`で受ける**。素の`List<String>`のまま値が無いと起動時に例外（`Failed to load config value`）。既存の`gpu-broker.node-urls`（フェーズA〜C）と同じ`Optional`パターンに合わせた。
+4. `quarkus-config-yaml`は追加しなかった——`broker.nodes`は単純なカンマ区切りリストであり`application.properties`の既存の慣行（旧`gpu-broker.node-urls`と同じ）で足りるため。
+
+### 未実装（既知）
+- `ProxyResource`/`AsyncJobResource`の`X-Job-Priority`ヘッダー、`RestMulti`によるストリーミング応答実配線を、実際のAIサービス（vLLM等）またはstubに対するIT（`*IT.java`、k8s-dev環境）でまだ検証していない——プロジェクト方針上Docker/DevServices不使用のため、k8s-devへのデプロイが要る（`doc_SCIVICS003`の`e2e_tests`計画を参照）。
+- `PolledResponseSink`が保持する`Content-Type`を`GET`応答へどう反映するかは、`JobResult`のフィールドとしてJSONに含める設計のみで、実際の`AsyncJobResource.fetch`はJackson既定シリアライズに任せている（`JobResult`が`record`なので自動的にフィールドが出力されるが、専用の検証はしていない）。

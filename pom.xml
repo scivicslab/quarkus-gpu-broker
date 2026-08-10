@@ -47,6 +47,10 @@
       <artifactId>quarkus-arc</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-scheduler</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.scivicslab</groupId>
       <artifactId>pojo-actor</artifactId>
       <version>3.5.0</version>
