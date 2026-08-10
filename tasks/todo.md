@@ -116,3 +116,16 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 ### 未実装（既知）
 - `ProxyResource`/`AsyncJobResource`の`X-Job-Priority`ヘッダー、`RestMulti`によるストリーミング応答実配線を、実際のAIサービス（vLLM等）またはstubに対するIT（`*IT.java`、k8s-dev環境）でまだ検証していない——プロジェクト方針上Docker/DevServices不使用のため、k8s-devへのデプロイが要る（`doc_SCIVICS003`の`e2e_tests`計画を参照）。
 - `PolledResponseSink`が保持する`Content-Type`を`GET`応答へどう反映するかは、`JobResult`のフィールドとしてJSONに含める設計のみで、実際の`AsyncJobResource.fetch`はJackson既定シリアライズに任せている（`JobResult`が`record`なので自動的にフィールドが出力されるが、専用の検証はしていない）。
+
+## フェーズE: CIDR表記対応 ＋ 実機E2E検証（2026-08-10）
+
+`ChatCompletionsResource`削除後、フェーズDの実装が実際のHTTP通信を一度も経ていなかったため、実ネットワーク（192.168.5.0/26）に対して実際にリクエストを通した。あわせて、物理ノードをコンマ区切りIPで1台ずつ列挙する運用は5〜7台規模で辛いという指摘を受け、CIDR表記対応を追加した。
+
+- [x] `boot/CidrRange.java`新設: `broker.nodes`の各エントリをCIDR表記なら展開、プレーンIPならそのまま返す。`/24`より大きい範囲（タイプミス対策）は`IllegalArgumentException`で拒否
+- [x] `boot/JobQueueRegistry.onStart`: 逐次二重forループを`Executors.newVirtualThreadPerTaskExecutor()`による並列プローブへ変更（CIDR展開で候補数が数十〜256に増えるため）。並列化の安全性は`ActorRef.createChild`の`CopyOnWriteArraySet`と`queues`マップの`ConcurrentHashMap#computeIfAbsent`で担保されることをPOJO-actorのソースで確認済み
+- [x] `mvn install`（27件GREEN）後、`-Dbroker.nodes=192.168.5.0/26`で実起動 → 実ノード3台（192.168.5.14/.16/.17）を3.365秒の起動時間内に発見
+- [x] 実チャット補完リクエストで**実バグを発見**: `VLLM_CHAT`の`queueName`が`"vllm-" + モデル名`をそのまま連結しており、実際のモデルid`google/gemma-4-26B-A4B-it`（`/`を含む）で`/queue/{queueName}`ルーティングが壊れる（URLエンコード無しだと`404`）。ユニットテストはスラッシュを含まない合成モデル名しか使っておらず、この不具合を検出できていなかった
+- [x] `config/EndpointKind.sanitizeForPathSegment(String)`追加（`[^A-Za-z0-9._-]`を`-`に置換）、`VLLM_CHAT.deriveQueueName`へ適用。`EndpointKindTest`に検証テスト追加、`mvn install`で28件GREEN
+- [x] 修正後、実ネットワークへ再デプロイし`POST /queue/vllm-google-gemma-4-26B-A4B-it`（URLエンコード無し）で実vLLMから正常なchat completion応答を確認（`ProxyResource`→`JobQueue`→`AiServiceEndpoint`→`HttpAiServiceClient`→実vLLM→`StreamingResponseSink`/`RestMulti`→クライアント、という設計上の経路全体が実際に動くことを実証）
+- [x] 設計文書（`012_configuration`・`016_endpoint_kinds`・`015_initialization`・`e2e_tests`）へCIDR対応とqueueName安全化を反映
+- [x] 検証後、テスト用brokerプロセスは停止済み

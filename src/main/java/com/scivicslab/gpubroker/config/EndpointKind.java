@@ -32,7 +32,7 @@ public enum EndpointKind {
 
         @Override
         public String deriveQueueName(String probeResponseBody) {
-            return "vllm-" + extractModelName(probeResponseBody);
+            return "vllm-" + sanitizeForPathSegment(extractModelName(probeResponseBody));
         }
     },
     YOMITOKU_OCR(8013, "/health") {
@@ -103,5 +103,14 @@ public enum EndpointKind {
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("malformed /v1/models response: " + probeResponseBody, e);
         }
+    }
+
+    /**
+     * A model id such as {@code google/gemma-4-26B-A4B-it} is not a safe single
+     * {@code /queue/{queueName}} path segment as-is — the {@code /} would split it into two
+     * segments. Replace anything outside the URL path-segment-safe unreserved set with {@code -}.
+     */
+    static String sanitizeForPathSegment(String raw) {
+        return raw.replaceAll("[^A-Za-z0-9._-]", "-");
     }
 }

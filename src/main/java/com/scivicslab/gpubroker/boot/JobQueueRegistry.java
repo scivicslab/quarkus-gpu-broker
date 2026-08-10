@@ -7,10 +7,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -62,12 +65,26 @@ public class JobQueueRegistry {
     void onStart(@Observes StartupEvent event) {
         ActorRef<ROOT> root = system.actorOf("root", new ROOT());
 
-        for (String nodeIp : nodeIps.orElse(List.of())) {
-            for (EndpointKind kind : EndpointKind.values()) {
-                String address = nodeIp + ":" + kind.conventionalPort();
-                probe(address, kind).ifPresent(queueName -> registerEndpoint(root, queueName, address, kind));
+        // A CIDR block (e.g. 192.168.5.0/26) can expand to dozens of candidate addresses;
+        // probe every address x EndpointKind combination concurrently so startup stays fast.
+        try (ExecutorService probes = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (String nodeIp : expandNodeIps()) {
+                for (EndpointKind kind : EndpointKind.values()) {
+                    probes.submit(() -> {
+                        String address = nodeIp + ":" + kind.conventionalPort();
+                        probe(address, kind).ifPresent(queueName -> registerEndpoint(root, queueName, address, kind));
+                    });
+                }
             }
+        }   // blocks here until every probe has finished
+    }
+
+    private List<String> expandNodeIps() {
+        List<String> expanded = new ArrayList<>();
+        for (String entry : nodeIps.orElse(List.of())) {
+            expanded.addAll(CidrRange.expand(entry));
         }
+        return expanded;
     }
 
     void onShutdown(@Observes ShutdownEvent event) {

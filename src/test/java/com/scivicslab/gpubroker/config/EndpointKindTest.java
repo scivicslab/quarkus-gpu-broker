@@ -1,6 +1,7 @@
 package com.scivicslab.gpubroker.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -24,6 +25,18 @@ class EndpointKindTest {
         String body = "{\"object\":\"list\",\"data\":[{\"id\":\"gemma-4\",\"object\":\"model\"}]}";
 
         assertEquals("vllm-gemma-4", EndpointKind.VLLM_CHAT.deriveQueueName(body));
+    }
+
+    @Test
+    void vllmChat_modelIdWithSlash_sanitizesIntoASinglePathSegment() {
+        // Real HuggingFace-style ids look like "org/repo-name" — the "/" must not
+        // survive into queueName, or /queue/{queueName} routing breaks.
+        String body = "{\"object\":\"list\",\"data\":[{\"id\":\"google/gemma-4-26B-A4B-it\",\"object\":\"model\"}]}";
+
+        String queueName = EndpointKind.VLLM_CHAT.deriveQueueName(body);
+
+        assertEquals("vllm-google-gemma-4-26B-A4B-it", queueName);
+        assertFalse(queueName.contains("/"), "queueName must be a single URL path segment");
     }
 
     @Test
