@@ -124,4 +124,20 @@ class JobQueuePriorityTest {
         assertEquals(0, snapshot.idleCount());
         assertEquals(1, snapshot.pendingCount());
     }
+
+    @Test
+    void snapshot_reportsTheActualEndpointIds_notJustCounts() {
+        JobQueue queue = new JobQueue();
+        queue.attach("192.168.5.16:8000");
+        queue.attach("192.168.5.17:8000");
+        queue.submit(job(Priority.BACKGROUND, "b1"));   // dispatched to whichever parked idle first
+
+        QueueSnapshot snapshot = queue.snapshot();
+
+        assertEquals(1, snapshot.activeEndpointIds().size());
+        assertEquals(1, snapshot.idleEndpointIds().size());
+        assertTrue(snapshot.activeEndpointIds().get(0).startsWith("192.168.5."));
+        assertTrue(snapshot.idleEndpointIds().get(0).startsWith("192.168.5."));
+        assertFalse(snapshot.activeEndpointIds().get(0).equals(snapshot.idleEndpointIds().get(0)));
+    }
 }

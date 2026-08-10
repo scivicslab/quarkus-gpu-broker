@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 import com.scivicslab.gpubroker.model.QueueSnapshot;
 import com.scivicslab.gpubroker.model.QueueStatus;
 
-@DisplayName("StatusPageRenderer — HTML for GET /status")
+@DisplayName("StatusPageRenderer — HTML for the status page")
 class StatusPageRendererTest {
 
     @Test
@@ -23,7 +23,8 @@ class StatusPageRendererTest {
 
     @Test
     void oneQueue_rendersItsNameAndCounts() {
-        QueueStatus status = new QueueStatus("vllm-gemma4", new QueueSnapshot(1, 2, 3));
+        QueueStatus status = new QueueStatus("vllm-gemma4",
+                new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000", "192.168.5.14:8000"), 3));
 
         String html = StatusPageRenderer.render(List.of(status));
 
@@ -34,24 +35,38 @@ class StatusPageRendererTest {
     }
 
     @Test
-    void allZeroCounts_rendersNoBarSegments() {
-        QueueStatus status = new QueueStatus("idle-queue", new QueueSnapshot(0, 0, 0));
+    void oneQueue_listsTheActualEndpointAddresses() {
+        QueueStatus status = new QueueStatus("vllm-gemma4",
+                new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000"), 0));
+
+        String html = StatusPageRenderer.render(List.of(status));
+
+        assertTrue(html.contains("192.168.5.16:8000 (active)"));
+        assertTrue(html.contains("192.168.5.17:8000 (idle)"));
+    }
+
+    @Test
+    void allEmpty_rendersNoBarSegmentsAndNoEndpointList() {
+        QueueStatus status = new QueueStatus("idle-queue", new QueueSnapshot(List.of(), List.of(), 0));
 
         String html = StatusPageRenderer.render(List.of(status));
 
         assertFalse(html.contains("class=\"active\""));
         assertFalse(html.contains("class=\"idle\""));
         assertFalse(html.contains("class=\"pending\""));
+        assertFalse(html.contains("endpoints:"));
     }
 
     @Test
-    void queueNameIsHtmlEscaped() {
-        QueueStatus status = new QueueStatus("a<b>&c", new QueueSnapshot(0, 0, 0));
+    void queueNameAndEndpointIdAreHtmlEscaped() {
+        QueueStatus status = new QueueStatus("a<b>&c", new QueueSnapshot(List.of("x<y"), List.of(), 0));
 
         String html = StatusPageRenderer.render(List.of(status));
 
         assertTrue(html.contains("a&lt;b&gt;&amp;c"));
         assertFalse(html.contains("a<b>&c"));
+        assertTrue(html.contains("x&lt;y"));
+        assertFalse(html.contains("x<y"));
     }
 
     @Test

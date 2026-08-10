@@ -130,15 +130,25 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 - [x] 設計文書（`012_configuration`・`016_endpoint_kinds`・`015_initialization`・`e2e_tests`）へCIDR対応とqueueName安全化を反映
 - [x] 検証後、テスト用brokerプロセスは停止済み
 
-## フェーズF: 読み取り専用ステータスページ `GET /status`（2026-08-10）
+## フェーズF: 読み取り専用ステータスページ `GET /`（2026-08-10）
 
 `gpu-broker`はAPI専用でブラウザ画面が無く、ブラウザで`localhost:28003`へアクセスすると既定の`404 Resource not found`になる（バグではなく仕様——起動確認は`AI-workspace`のツール一覧かAPIエンドポイントへの直接リクエストで行う）。ただし稼働中に「今どのキューにどれだけ溜まっているか」を目で見る手段が無い点は実際の不便であり、遺伝研スパコンの`job_queue_status`ページ（積み上げ棒グラフ部分のみ）を参考に、読み取り専用のスナップショットページを追加した。設計文書は`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/040_observability/000_QueueSnapshotStatus_260810_oo01`。
 
 - [x] `model/QueueSnapshot`（`activeCount`/`idleCount`/`pendingCount`の`record`）、`model/QueueStatus`（`queueName`＋`QueueSnapshot`）新設
 - [x] `actor/JobQueue.snapshot()`追加（既存フィールドを読むだけの読み取り専用メソッド、`activeCount = activeEndpointIds.size() - idleEndpointIds.size()`）
 - [x] `boot/JobQueueRegistry.statusSnapshot()`追加（登録済み全`JobQueue`へ`ask(JobQueue::snapshot)`し`queueName`と組む）
-- [x] `rest/StatusResource`（`GET /status`、`@Blocking`）＋`rest/StatusPageRenderer`（テンプレートエンジン不使用、素のHTML文字列組み立て。稼働中=赤／空き=緑／待ち行列=青の積み上げ棒、10秒ごと自動更新）新設。「エラー」区分は設けない——`gpu-broker`では失敗ジョブは即座に引き継ぐか再試行上限超過で終端するかのどちらかで、キュー内に留まらないため
+- [x] `rest/StatusResource`（`@Blocking`）＋`rest/StatusPageRenderer`（テンプレートエンジン不使用、素のHTML文字列組み立て。稼働中=赤／空き=緑／待ち行列=青の積み上げ棒、10秒ごと自動更新）新設。「エラー」区分は設けない——`gpu-broker`では失敗ジョブは即座に引き継ぐか再試行上限超過で終端するかのどちらかで、キュー内に留まらないため
 - [x] `mvn install`（34件GREEN）: `JobQueuePriorityTest`に`snapshot_reportsActiveIdleAndPendingCounts`追加、`StatusPageRendererTest`新設（5件、HTMLエスケープ含む）
 - [x] 実ネットワーク（192.168.5.0/26）に対して実起動し、`GET /status`で実際に発見した2キュー（`vllm-google-gemma-4-26B-A4B-it`＝2台、`vllm-Qwen2.5-14B-Instruct-AWQ`＝1台）のidle件数を確認。実チャットリクエストを送信中に同時に`GET /status`を叩き、`active: 1, idle: 1`が実際にリアルタイムで表示されることを確認
-- [x] 設計文書（`e2e_tests`のシナリオ1・6とUnder the Hood）へ、`GET /status`が「Actor treeの状態を外部から確認する手段が無い」という既知の欠落を（集計件数の範囲で）解消したことを反映
-- [x] 検証後、テスト用brokerプロセスは停止済み
+- [x] 設計文書（`e2e_tests`のシナリオ1・6とUnder the Hood）へ、このステータスページが「Actor treeの状態を外部から確認する手段が無い」という既知の欠落を（集計件数の範囲で）解消したことを反映
+- [x] `GET /status`として一度commit・push済みだったが、「`/`は他に使わないのだから専用パスを立てる理由が無い」という指摘を受け、`@Path("/status")`→`@Path("/")`へ変更。設計文書（`040_observability`・`e2e_tests`）も追随して更新し、再度`mvn install`（34件GREEN）・実ネットワークでの`curl`確認・jar再デプロイを実施
+- [x] ステータスページを見たユーザーから「embedding・YomiToku・Markerが1件も出ていないのはなぜ」と指摘を受け、実ノードへ直接`curl`して調査 → **実バグ発見**: `EndpointKind.YOMITOKU_OCR`/`MARKER_OCR`/`EMBEDDING`のプローブパスが`/health`だったが、実サービスはいずれもルートパス（`/`）で状態を返す（`/health`は`404`）。`VLLM_CHAT`の`/v1/models`は実際に正しく機能しており対象外
+- [x] `EndpointKind`の3種別のプローブパスを`/health`→`/`へ修正。`EndpointKindTest`は`conventionalPort()`のみ検証し`probePath()`を一度もアサートしていなかった（この不具合がテストで検出されなかった理由）ため、`eachKind_hasItsOwnConventionalPortAndProbePath`に3種別分の`probePath()`アサーションを追加
+- [x] 設計文書（`012_configuration`・`016_endpoint_kinds`）のプローブパス例を`/`へ修正し、`012_configuration`のUnder the Hoodに実サービス確認結果を記録
+- [x] `mvn install`（34件GREEN）後、実ネットワーク（192.168.5.0/26）で再起動 → embedding（4台）・yomitoku-ocr（2台）・marker-ocr（1台）・vllmの2キューが全て検出されることを確認。jar再デプロイ済み
+- [x] ステータスページを見たユーザーから「`Qwen`はどの物理ノードに立ってるの？件数だけでなく`AiServiceEndpoint`の識別子（IP:port）を列挙すればいいのでは」と指摘を受け対応。`JobQueue.activeEndpointIds`/`idleEndpointIds`は元々`AiServiceEndpoint`のアドレスそのもの（`JobQueueRegistry`が`queue.createChild(address, endpoint)`とアクター名にアドレスを使っているため）なので、新しい追跡は不要——`QueueSnapshot`を`activeCount: int`/`idleCount: int`から`activeEndpointIds: List<String>`/`idleEndpointIds: List<String>`（`activeCount()`/`idleCount()`はその派生）へ変更するだけで済んだ
+- [x] `StatusPageRenderer`が各キューの棒の下にアドレス一覧を「`192.168.5.16:8000 (active)`」のように列挙するよう変更。`pendingCount`は件数のまま——`deque`のジョブは特定の`AiServiceEndpoint`に紐付かないため列挙しようがない
+- [x] `mvn install`（36件GREEN）: `JobQueuePriorityTest`に`snapshot_reportsTheActualEndpointIds_notJustCounts`追加、`StatusPageRendererTest`にアドレス列挙・HTMLエスケープの検証を追加
+- [x] 実ネットワークで再検証: `Qwen2.5-14B-Instruct-AWQ`が`192.168.5.14:8000`にあることをページ上で確認。実チャットリクエスト送信中に`192.168.5.17:8000`が`(active)`と表示されることも確認
+- [x] 設計文書（`040_observability`・`e2e_tests`）を更新——`e2e_tests`の「集計件数のみでアドレスは示さない」という記述はこの変更で誤りになったため修正
+- [x] jar再デプロイ済み。検証後、テスト用brokerプロセスは停止済み

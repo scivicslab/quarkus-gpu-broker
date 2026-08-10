@@ -8,6 +8,7 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -107,11 +108,12 @@ public final class JobQueue {
         return activeEndpointIds.size() == idleEndpointIds.size();
     }
 
-    /** Current counts for {@code GET /status} — read-only, does not mutate state. */
+    /** Current state for the status page — read-only, does not mutate anything. */
     public QueueSnapshot snapshot() {
-        int idle = idleEndpointIds.size();
-        int active = activeEndpointIds.size() - idle;
-        return new QueueSnapshot(active, idle, deque.size());
+        Set<String> idle = new LinkedHashSet<>(idleEndpointIds);
+        Set<String> active = new LinkedHashSet<>(activeEndpointIds);
+        active.removeAll(idle);
+        return new QueueSnapshot(List.copyOf(active), List.copyOf(idle), deque.size());
     }
 
     private String pollIdleEndpoint(Priority priority) {
