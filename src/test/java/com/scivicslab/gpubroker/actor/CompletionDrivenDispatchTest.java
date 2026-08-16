@@ -33,7 +33,7 @@ class CompletionDrivenDispatchTest {
     /** Create an AiServiceEndpointWorker, bind its self-reference, and have it enter the idle set. */
     private static void spawnEndpoint(ActorSystem system, ActorRef<JobQueue> queue,
                                       LatchAiServiceClient client, String address) {
-        AiServiceEndpointWorker endpoint = new VllmChatEndpointWorker(queue.getName(), address, client);
+        AiServiceEndpointWorker endpoint = new AiServiceEndpointWorker(queue.getName(), address, client, "/v1/chat/completions");
         ActorRef<AiServiceEndpointWorker> ref = system.actorOf(address, endpoint);
         ref.tell(e -> e.bind(system, ref)).join();   // bind self before start
         ref.tell(AiServiceEndpointWorker::start);          // enter idle → requestWork

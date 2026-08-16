@@ -18,25 +18,30 @@ import com.scivicslab.pojoactor.core.ActorSystem;
  * 192.168.5.16:8000#0}), not the physical {@code AiServiceEndpoint}'s own
  * identity — see {@code 018_concurrency_control/000_PerEndpointConcurrency_260810_oo01}
  * for why this needs zero changes to {@code JobQueue} itself.
+ *
+ * <p>A single concrete class, not subclassed per {@code EndpointProbe} kind
+ * — {@code requestPath} is the only thing that ever varied between the old
+ * per-kind subclasses, and it is pure data (a String), not behavior. See
+ * {@code AiServiceEndpointSubclasses_260810_oo01} "なぜサブクラスは EndpointProbe 側に
+ * 作り、AiServiceEndpointWorker・Builder 側には作らないか".
  */
-public abstract class AiServiceEndpointWorker {
+public final class AiServiceEndpointWorker {
 
     private static final int MAX_ATTEMPTS = 3;
 
     private final String queueName;
     private final String address;
     private final AiServiceClient client;
+    private final String requestPath;
     private ActorSystem system;
     private ActorRef<AiServiceEndpointWorker> self;
 
-    protected AiServiceEndpointWorker(String queueName, String address, AiServiceClient client) {
+    public AiServiceEndpointWorker(String queueName, String address, AiServiceClient client, String requestPath) {
         this.queueName = queueName;
         this.address = address;
         this.client = client;
+        this.requestPath = requestPath;
     }
-
-    /** The URL path this worker's real requests go to (e.g. {@code /v1/chat/completions}). */
-    protected abstract String requestPath();
 
     /** Bind this actor's own reference; must run before {@link #start}. */
     public void bind(ActorSystem system, ActorRef<AiServiceEndpointWorker> self) {
@@ -57,7 +62,7 @@ public abstract class AiServiceEndpointWorker {
     /** Process one job to completion, then pull the next (completion-driven). */
     public void assign(Job job) {
         try {
-            client.send(address, requestPath(), job);   // this actor's own virtual thread waits for completion
+            client.send(address, requestPath, job);   // this actor's own virtual thread waits for completion
         } catch (AiServiceCallException e) {
             requeue(job);
         }

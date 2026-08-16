@@ -1,0 +1,31 @@
+# broker.* configuration — see BrokerConfig and CapabilityConfig_260810_oo01.
+#
+# nodes: physical compute node IPs/CIDR blocks to probe (JobQueueRegistry appends each
+# EndpointProbe's conventional port). Each entry is either a plain IP or a CIDR block
+# (expanded to every address in it, up to /24). Empty by default; set per environment.
+#
+# broker:
+#   nodes:
+#     - 192.168.5.16
+#     - 192.168.5.17
+#     - 192.168.5.0/26
+
+# capabilities: per host:port overrides/declarations. max-concurrency overrides
+# EndpointProbe.defaultMaxConcurrency() and is actually used by AiServiceEndpointBuilder
+# to size the worker pool — see the 192.168.5.14 example in CapabilityConfig_260810_oo01.
+# max-context-length / thinking-mode-supported / tool-calling-supported are operator-declared,
+# display-only fields shown on the status page — never verified against the real service.
+#
+# broker:
+#   capabilities:
+#     "192.168.5.14:8000":
+#       max-concurrency: 1
+#     "192.168.5.16:8000":
+#       max-concurrency: 32
+#       max-context-length: 8192
+#       thinking-mode-supported: false
+
+"%test":
+  broker:
+    nodes:
+      - 127.0.0.1

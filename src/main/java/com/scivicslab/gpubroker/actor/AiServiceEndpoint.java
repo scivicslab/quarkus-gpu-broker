@@ -14,9 +14,10 @@ import com.scivicslab.pojoactor.core.ActorSystem;
  * side by side, not from any one worker handling more than one job at once
  * (see {@code 018_concurrency_control/000_PerEndpointConcurrency_260810_oo01}).
  *
- * <p>Not abstract, unlike the workers it spawns — what varies per {@code
- * EndpointKind} (request path, {@code maxConcurrency}) is fully captured by
- * the {@code workerFactory} passed in, so this class itself has nothing left
+ * <p>A single concrete class, like {@link AiServiceEndpointWorker} — what
+ * varies per {@code EndpointProbe} kind (request path, {@code
+ * maxConcurrency}) is fully captured by the {@code workerFactory} passed in
+ * by {@code AiServiceEndpointBuilder}, so this class itself has nothing left
  * to override.
  */
 public final class AiServiceEndpoint {

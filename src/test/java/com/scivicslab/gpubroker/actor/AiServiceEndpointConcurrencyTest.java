@@ -35,7 +35,7 @@ class AiServiceEndpointConcurrencyTest {
     private static void spawnPhysicalEndpoint(ActorSystem system, ActorRef<JobQueue> queue,
                                                LatchAiServiceClient client, String address, int maxConcurrency) {
         AiServiceEndpoint endpoint = new AiServiceEndpoint(address, maxConcurrency,
-                () -> new VllmChatEndpointWorker(queue.getName(), address, client));
+                () -> new AiServiceEndpointWorker(queue.getName(), address, client, "/v1/chat/completions"));
         ActorRef<AiServiceEndpoint> ref = system.actorOf(address, endpoint);
         ref.tell(e -> e.bind(system, ref)).join();
         ref.tell(AiServiceEndpoint::start).join();

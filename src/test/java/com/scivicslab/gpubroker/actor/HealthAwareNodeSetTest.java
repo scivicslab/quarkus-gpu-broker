@@ -63,12 +63,12 @@ class HealthAwareNodeSetTest {
         client.markUnhealthy("bad");
         ActorRef<JobQueue> queue = system.actorOf("queue", new JobQueue());
 
-        spawnEndpoint(system, queue, new VllmChatEndpointWorker(queue.getName(), "bad", client), "bad");
+        spawnEndpoint(system, queue, new AiServiceEndpointWorker(queue.getName(), "bad", client, "/v1/chat/completions"), "bad");
 
         RecordingResponseSink sink = new RecordingResponseSink();
         submitAndDispatch(system, queue, job("j1", sink));   // the only endpoint so far → fails → requeues into the deque
 
-        spawnEndpoint(system, queue, new VllmChatEndpointWorker(queue.getName(), "good", client), "good");   // now free to pick it up
+        spawnEndpoint(system, queue, new AiServiceEndpointWorker(queue.getName(), "good", client, "/v1/chat/completions"), "good");   // now free to pick it up
 
         awaitOutcome(sink);
         assertTrue(sink.isCompleted());
@@ -85,7 +85,7 @@ class HealthAwareNodeSetTest {
         client.markUnhealthy("bad");
         ActorRef<JobQueue> queue = system.actorOf("queue", new JobQueue());
 
-        spawnEndpoint(system, queue, new VllmChatEndpointWorker(queue.getName(), "bad", client), "bad");   // the only endpoint, ever
+        spawnEndpoint(system, queue, new AiServiceEndpointWorker(queue.getName(), "bad", client, "/v1/chat/completions"), "bad");   // the only endpoint, ever
 
         RecordingResponseSink sink = new RecordingResponseSink();
         submitAndDispatch(system, queue, job("j1", sink));

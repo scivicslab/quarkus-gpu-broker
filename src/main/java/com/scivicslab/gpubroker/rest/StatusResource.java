@@ -1,6 +1,7 @@
 package com.scivicslab.gpubroker.rest;
 
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
+import com.scivicslab.gpubroker.config.BrokerConfig;
 
 import io.smallrye.common.annotation.Blocking;
 import jakarta.inject.Inject;
@@ -25,10 +26,13 @@ public class StatusResource {
     @Inject
     JobQueueRegistry queues;
 
+    @Inject
+    BrokerConfig brokerConfig;
+
     @GET
     @Blocking
     @Produces(MediaType.TEXT_HTML)
     public String status() {
-        return StatusPageRenderer.render(queues.statusSnapshot());
+        return StatusPageRenderer.render(queues.statusSnapshot(), brokerConfig.capabilities());
     }
 }
