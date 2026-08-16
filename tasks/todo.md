@@ -133,7 +133,7 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 
 ## フェーズF: 読み取り専用ステータスページ `GET /`（2026-08-10）
 
-`gpu-broker`はAPI専用でブラウザ画面が無く、ブラウザで`localhost:28003`へアクセスすると既定の`404 Resource not found`になる（バグではなく仕様——起動確認は`AI-workspace`のツール一覧かAPIエンドポイントへの直接リクエストで行う）。ただし稼働中に「今どのキューにどれだけ溜まっているか」を目で見る手段が無い点は実際の不便であり、遺伝研スパコンの`job_queue_status`ページ（積み上げ棒グラフ部分のみ）を参考に、読み取り専用のスナップショットページを追加した。設計文書は`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/040_observability/000_QueueSnapshotStatus_260810_oo01`。
+`gpu-broker`はAPI専用でブラウザ画面が無く、ブラウザで`localhost:28003`へアクセスすると既定の`404 Resource not found`になる（バグではなく仕様——起動確認は`AI-workspace`のツール一覧かAPIエンドポイントへの直接リクエストで行う）。ただし稼働中に「今どのキューにどれだけ溜まっているか」を目で見る手段が無い点は実際の不便であり、遺伝研スパコンの`job_queue_status`ページ（積み上げ棒グラフ部分のみ）を参考に、読み取り専用のスナップショットページを追加した。設計文書は`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/`配下の`QueueSnapshotStatus_260810_oo01`。
 
 - [x] `model/QueueSnapshot`（`activeCount`/`idleCount`/`pendingCount`の`record`）、`model/QueueStatus`（`queueName`＋`QueueSnapshot`）新設
 - [x] `actor/JobQueue.snapshot()`追加（既存フィールドを読むだけの読み取り専用メソッド、`activeCount = activeEndpointIds.size() - idleEndpointIds.size()`）
@@ -156,7 +156,7 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 
 ## フェーズG: AiServiceEndpointあたりの同時実行数制御（2026-08-10）
 
-`AiServiceEndpoint.assign`が自分のアクタースレッドで同期的にブロックする構造上、1つの`AiServiceEndpoint`は常にN=1（同時1件）しかジョブを処理できなかった。この制約は「アクターモデルから自動的にそうなる」という理由だけで採用されており、vLLMのcontinuous batchingの恩恵を一切使えていなかった（過去の実タスクで8並列が明確に速かった実績あり）。ユーザー提案の「`AiServiceEndpoint`の子として同時実行数ぶんの`AiServiceEndpointWorker`を作る」方式で、`JobQueue`を一切変更せずに解決した。設計文書は`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/018_concurrency_control/000_PerEndpointConcurrency_260810_oo01`。
+`AiServiceEndpoint.assign`が自分のアクタースレッドで同期的にブロックする構造上、1つの`AiServiceEndpoint`は常にN=1（同時1件）しかジョブを処理できなかった。この制約は「アクターモデルから自動的にそうなる」という理由だけで採用されており、vLLMのcontinuous batchingの恩恵を一切使えていなかった（過去の実タスクで8並列が明確に速かった実績あり）。ユーザー提案の「`AiServiceEndpoint`の子として同時実行数ぶんの`AiServiceEndpointWorker`を作る」方式で、`JobQueue`を一切変更せずに解決した。設計文書は`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/`配下の`PerEndpointConcurrency_260810_oo01`。
 
 - [x] 実装前に、YomiToku OCR・Marker OCR・embeddingの3種別についても「未確認だから保守的にN=1」で済ませず、実ノードへ直接並行リクエストを送って実測（`調べればいいだけ`という指摘を受けて）:
   - `EMBEDDING`: 30並列で全件`200`、1件あたりコストもほぼ一定 → 安全
