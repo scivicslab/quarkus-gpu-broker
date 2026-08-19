@@ -1,6 +1,8 @@
 package com.scivicslab.gpubroker.e2e;
 
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import io.restassured.RestAssured;
 
@@ -29,5 +31,23 @@ abstract class GpuBrokerE2EBase {
         if (!condition) {
             throw new AssertionError(message);
         }
+    }
+
+    private static final Pattern ROW_COUNTS = Pattern.compile(
+            "</strong> — active: (\\d+), idle: \\d+, pending: (\\d+)");
+
+    /** Reads the {@code active: N} count for {@code queueName} off the status page ({@code GET /}). */
+    protected int readActiveCount(String queueName) {
+        return readRowCounts(queueName)[0];
+    }
+
+    /** Reads the {@code pending: N} count for {@code queueName} off the status page ({@code GET /}). */
+    protected int readPendingCount(String queueName) {
+        return readRowCounts(queueName)[1];
+    }
+
+    private int[] readRowCounts(String queueName) {
+        Matcher m = Pattern.compile(Pattern.quote(queueName) + ROW_COUNTS.pattern()).matcher(fetchStatus());
+        return m.find() ? new int[] {Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))} : new int[] {0, 0};
     }
 }

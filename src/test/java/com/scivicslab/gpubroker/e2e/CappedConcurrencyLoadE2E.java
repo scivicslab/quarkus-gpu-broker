@@ -4,8 +4,6 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import io.restassured.RestAssured;
 
@@ -37,7 +35,7 @@ class CappedConcurrencyLoadE2E extends GpuBrokerE2EBase {
 
         long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
         while (System.nanoTime() < deadline && !allDone(futures)) {
-            observedMaxActive.updateAndGet(current -> Math.max(current, readCappedQueueActiveCount()));
+            observedMaxActive.updateAndGet(current -> Math.max(current, readActiveCount(CAPPED_QUEUE)));
             TimeUnit.MILLISECONDS.sleep(100);
         }
         CompletableFuture.allOf(futures).get(30, TimeUnit.SECONDS);
@@ -69,11 +67,5 @@ class CappedConcurrencyLoadE2E extends GpuBrokerE2EBase {
                 .when().post("/queue/" + CAPPED_QUEUE)
                 .then().extract().statusCode();
         require(status == 200, "expected 200 from " + CAPPED_QUEUE + ", got " + status);
-    }
-
-    private int readCappedQueueActiveCount() {
-        Matcher m = Pattern.compile(Pattern.quote(CAPPED_QUEUE) + "</strong> — active: (\\d+)")
-                .matcher(fetchStatus());
-        return m.find() ? Integer.parseInt(m.group(1)) : 0;
     }
 }

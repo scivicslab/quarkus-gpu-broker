@@ -31,7 +31,14 @@ public class GpuBrokerE2ERunner {
         System.out.println("=== quarkus-gpu-broker E2E Tests ===");
         new StartupDiscoveryE2E().run();
         new EmbeddingRoundTripE2E().run();
+        new StreamingRoundTripE2E().run();
+        new PriorityOrderingE2E().run();
         new CappedConcurrencyLoadE2E().run();
+        new ForegroundReservationE2E().run();   // ~3 minutes
+        // JobResultTtlE2E (~70 minutes) is NOT run here — see its own Javadoc.
+        // ReservationStarvationBugE2E is NOT run here either: it reproduces a known,
+        // unfixed bug (currently FAILS on purpose) and leaves the queue with a stuck
+        // job afterward — see JobQueueReservationStarvationBug_260819_oo01.
         System.out.println("=== All E2E tests PASSED ===");
     }
 }
