@@ -127,6 +127,59 @@
           </systemPropertyVariables>
         </configuration>
       </plugin>
+      <!--
+        GpuBrokerRealClusterIT needs config/application.yaml (broker.nodes/capabilities
+        for the real W206 cluster) in place before the packaged jar boots. A JUnit5
+        @BeforeAll/static block cannot guarantee this: Jupiter's test discovery loads
+        test classes without running static initializers (Class.forName(name, false, ...)),
+        so class-load timing is not ordered against QuarkusIntegrationTestExtension's own
+        BeforeAllCallback that launches the jar — observed as an intermittent race (the
+        app sometimes booted with the file not yet written). Maven's own lifecycle phases
+        give a hard ordering guarantee that JUnit5 extension order does not.
+      -->
+      <plugin>
+        <artifactId>maven-resources-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>write-it-config-override</id>
+            <phase>pre-integration-test</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.basedir}/config</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${project.basedir}/src/test/resources/it</directory>
+                  <includes>
+                    <include>application.yaml</include>
+                  </includes>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <artifactId>maven-clean-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>remove-it-config-override</id>
+            <phase>post-integration-test</phase>
+            <goals>
+              <goal>clean</goal>
+            </goals>
+            <configuration>
+              <excludeDefaultDirectories>true</excludeDefaultDirectories>
+              <filesets>
+                <fileset>
+                  <directory>${project.basedir}/config</directory>
+                </fileset>
+              </filesets>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
 </project>
