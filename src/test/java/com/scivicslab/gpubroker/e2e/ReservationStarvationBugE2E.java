@@ -7,26 +7,20 @@ import java.util.concurrent.TimeUnit;
 import io.restassured.RestAssured;
 
 /**
- * Reproduces a known, unfixed bug in {@code JobQueue.submit()}: a worker
+ * Regression test for a {@code JobQueue.submit()} starvation bug: a worker
  * that goes idle while reserved (see {@code NodeReservation_260810_oo01})
- * is left holding a background job in the deque behind it. Once the
- * reservation lapses, nothing re-checks that worker on its own — the next
- * new job to arrive gets handed the worker directly ({@code
- * JobQueue.submit()}'s fast path checks only whether a worker is idle, not
- * whether the deque already has older jobs waiting), so the old
- * background job stays stuck. See
- * {@code 010_JobQueueReservationStarvationBug_260819_oo01} for the full
- * explanation.
+ * used to be left holding a background job in the deque behind it forever
+ * — {@code submit()}'s fast path checks only whether a worker is idle, not
+ * whether the deque already has older jobs waiting, so newer jobs kept
+ * jumping the queue. Fixed by giving {@code JobQueue} an {@code
+ * ActorSystem} and a periodic {@code Scheduler} reconciliation (see {@code
+ * 010_JobQueueReservationStarvationBug_260819_oo01} for the full
+ * explanation and verification history — this test used to FAIL
+ * reproducibly before that fix).
  *
- * <p>This test currently FAILS — that is the point. It should start
- * passing once the bug is fixed (either the periodic {@code Scheduler}
- * mitigation discussed in that document, or the deeper fix to {@code
- * JobQueue.submit()} itself).
- *
- * <p>Deliberately NOT called from {@link GpuBrokerE2ERunner}: it takes
- * over 3 minutes, and — because the bug it reproduces is real — it
- * LEAVES the queue with a permanently stuck job. Restart
- * quarkus-gpu-broker after running this to clear it. Run standalone:
+ * <p>Deliberately NOT called from {@link GpuBrokerE2ERunner}: it still
+ * takes about 3.5 minutes (waiting out two real reservation windows).
+ * Run standalone:
  * <pre>
  *   mvn test-compile exec:java \
  *     -Dexec.mainClass=com.scivicslab.gpubroker.e2e.ReservationStarvationBugE2E \
@@ -44,8 +38,8 @@ class ReservationStarvationBugE2E extends GpuBrokerE2EBase {
     }
 
     void run() throws Exception {
-        System.out.println("--- ReservationStarvationBugE2E --- (reproduces a known bug; takes ~3.5 minutes;"
-                + " LEAVES the queue with a stuck job — restart quarkus-gpu-broker afterward)");
+        System.out.println("--- ReservationStarvationBugE2E --- (regression test for the reservation"
+                + " starvation bug; takes ~3.5 minutes)");
 
         // Step 1: a foreground job reserves the (only) worker for 3 minutes.
         sendChatCompletion("foreground");
@@ -65,12 +59,27 @@ class ReservationStarvationBugE2E extends GpuBrokerE2EBase {
 
         // Step 4: a brand-new foreground job arrives after the reservation lapses.
         // JobQueue.submit()'s fast path hands it the now-idle worker directly,
-        // without checking that the step-2 job is still waiting in the deque.
+        // without checking that the step-2 job is still waiting in the deque — and
+        // because it is FOREGROUND, it re-reserves W for another 3 minutes.
         sendChatCompletion("foreground");
-        LOG.info("Step 4 done: a new foreground job was submitted and served");
+        LOG.info("Step 4 done: a new foreground job was submitted and served (re-reserves W for "
+                + RESERVATION_WINDOW.toSeconds() + "s more)");
 
-        // Give the queue a moment to settle, then check whether the step-2 job is still stuck.
+        // Immediate check: the old symptom — the step-2 job is not resolved just because a
+        // new job arrived and was served.
         TimeUnit.SECONDS.sleep(3);
+        boolean stillStuckRightAfterStep4 = !stuckJob.isDone();
+        LOG.info("Immediately after step 4: step-2 job still stuck=" + stillStuckRightAfterStep4);
+
+        // Wait out the reservation step 4 itself just created, plus a reconciliation margin,
+        // for JobQueue's periodic reconciliation (every 30s, see
+        // JobQueueReservationStarvationBug_260819_oo01) to have a real chance to pick the
+        // step-2 job up once nothing is re-reserving W anymore.
+        Duration reconcilePollWindow = RESERVATION_WINDOW.plusSeconds(45);
+        long deadline = System.nanoTime() + reconcilePollWindow.toNanos();
+        while (System.nanoTime() < deadline && !stuckJob.isDone()) {
+            TimeUnit.SECONDS.sleep(5);
+        }
 
         require(stuckJob.isDone(),
                 "the background job from step 2 must eventually be dispatched, not permanently stuck — "

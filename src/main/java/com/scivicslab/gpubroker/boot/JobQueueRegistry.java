@@ -130,7 +130,15 @@ public class JobQueueRegistry {
     }
 
     private void registerEndpoint(ActorRef<ROOT> root, EndpointProbe probe, EndpointInfo info) {
-        ActorRef<JobQueue> queue = queues.computeIfAbsent(info.queueName(), n -> root.createChild(n, new JobQueue()));
+        boolean[] isNewQueue = {false};
+        ActorRef<JobQueue> queue = queues.computeIfAbsent(info.queueName(), n -> {
+            isNewQueue[0] = true;
+            return root.createChild(n, new JobQueue());
+        });
+        if (isNewQueue[0]) {
+            queue.tell(q -> q.bind(system, queue));
+            queue.tell(JobQueue::startReconciliation);
+        }
         AiServiceEndpoint endpoint = builder.build(info, probe.requestPath());
         ActorRef<AiServiceEndpoint> endpointRef = queue.createChild(info.address(), endpoint);
         endpointRef.tell(e -> e.bind(system, endpointRef));

@@ -12,16 +12,19 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
 import com.scivicslab.gpubroker.model.QueueSnapshot;
+import com.scivicslab.pojoactor.core.ActorRef;
+import com.scivicslab.pojoactor.core.ActorSystem;
+import com.scivicslab.pojoactor.core.scheduler.Scheduler;
 
 /**
  * One capability's queue: a priority deque plus the set of
  * {@code AiServiceEndpoint}s (identified by {@code endpointId}, i.e. their
- * actor name) that serve it. A plain POJO — no {@code ActorRef} fields, no
- * {@code tell} to anyone — wrapped as a single POJO-actor so that
+ * actor name) that serve it. Wrapped as a single POJO-actor so that
  * {@code submit}/{@code requestWork}/{@code withdraw}/{@code attach} are
  * serialized through one mailbox.
  *
@@ -36,16 +39,27 @@ import com.scivicslab.gpubroker.model.QueueSnapshot;
  * the next one in the same conversation. The reservation is not actively
  * cleared by a timer; it is just a timestamp compared against {@code now}
  * whenever this POJO is next asked to hand out work.
+ *
+ * <p>Holds an {@code ActorSystem} (via {@link #bind}) and periodically
+ * re-checks its own idle endpoints ({@link #reconcileIdleEndpoints}) so a
+ * job left waiting behind a since-lapsed reservation is not starved
+ * forever by newer jobs — see
+ * {@code JobQueueReservationStarvationBug_260819_oo01} for why this is
+ * needed: {@link #submit} hands a freshly-idle endpoint directly to
+ * whatever job just arrived, without ever looking at {@link #deque}.
  */
 public final class JobQueue {
 
     private static final Duration DEFAULT_RESERVATION = Duration.ofMinutes(3);
+    private static final Duration RECONCILE_INTERVAL = Duration.ofSeconds(30);
 
     private final Deque<Job> deque = new ArrayDeque<>();
     private final Deque<String> idleEndpointIds = new ArrayDeque<>();
     private final Set<String> activeEndpointIds = new HashSet<>();
     private final Map<String, Instant> reservedUntil = new HashMap<>();
     private final Duration reservation;
+    private ActorSystem system;
+    private ActorRef<JobQueue> self;
 
     public JobQueue() {
         this(DEFAULT_RESERVATION);
@@ -54,6 +68,43 @@ public final class JobQueue {
     /** Package-visible: lets tests use a short reservation instead of waiting real minutes. */
     JobQueue(Duration reservation) {
         this.reservation = reservation;
+    }
+
+    /** Bind this actor's own reference; must run before {@link #startReconciliation}. */
+    public void bind(ActorSystem system, ActorRef<JobQueue> self) {
+        this.system = system;
+        this.self = self;
+    }
+
+    /**
+     * Starts the periodic re-check described in the class Javadoc. Scheduled against
+     * {@code self}, not called directly, so {@link #reconcileIdleEndpoints} runs serialized
+     * through this actor's own mailbox like every other message.
+     */
+    public void startReconciliation() {
+        new Scheduler().scheduleWithFixedDelay("reconcile", self, JobQueue::reconcileIdleEndpoints,
+                RECONCILE_INTERVAL.toSeconds(), RECONCILE_INTERVAL.toSeconds(), TimeUnit.SECONDS);
+    }
+
+    /**
+     * Re-offers work to every currently-idle endpoint. A no-op for any endpoint whose
+     * reservation (if any) still holds and has nothing FOREGROUND waiting — see
+     * {@link #pollWork}, reused as-is from the {@link #requestWork} path.
+     */
+    void reconcileIdleEndpoints() {
+        for (String endpointId : List.copyOf(idleEndpointIds)) {
+            Job job = pollWork(endpointId);
+            if (job != null) {
+                idleEndpointIds.remove(endpointId);
+                reserveIfForeground(endpointId, job);
+                dispatch(endpointId, job);
+            }
+        }
+    }
+
+    private void dispatch(String endpointId, Job job) {
+        ActorRef<AiServiceEndpointWorker> worker = system.getActor(endpointId);
+        worker.tell(w -> w.assign(job));
     }
 
     /** Enqueue a job. Returns the id of the AiServiceEndpoint to hand it to now, or null if parked. */

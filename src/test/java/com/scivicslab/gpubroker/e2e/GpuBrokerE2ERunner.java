@@ -36,9 +36,8 @@ public class GpuBrokerE2ERunner {
         new CappedConcurrencyLoadE2E().run();
         new ForegroundReservationE2E().run();   // ~3 minutes
         // JobResultTtlE2E (~70 minutes) is NOT run here — see its own Javadoc.
-        // ReservationStarvationBugE2E is NOT run here either: it reproduces a known,
-        // unfixed bug (currently FAILS on purpose) and leaves the queue with a stuck
-        // job afterward — see JobQueueReservationStarvationBug_260819_oo01.
+        // ReservationStarvationBugE2E is NOT run here either: it now passes (the bug is
+        // fixed), but still takes ~3.5 minutes — see JobQueueReservationStarvationBug_260819_oo01.
         System.out.println("=== All E2E tests PASSED ===");
     }
 }
