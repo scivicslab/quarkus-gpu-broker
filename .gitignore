@@ -2,8 +2,3 @@ target/
 *.class
 .vscode/
 .idea/
-
-# GpuBrokerRealClusterIT writes/deletes config/application.yaml around each
-# run (real node IPs); never committed, but exclude in case a run is
-# interrupted before cleanup.
-config/
