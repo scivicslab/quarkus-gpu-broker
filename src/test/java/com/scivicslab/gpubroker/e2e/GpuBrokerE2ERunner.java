@@ -32,9 +32,10 @@ public class GpuBrokerE2ERunner {
         new StartupDiscoveryE2E().run();
         new EmbeddingRoundTripE2E().run();
         new StreamingRoundTripE2E().run();
-        new PriorityOrderingE2E().run();
+        new PriorityOrderingE2E().run();        // up to ~4 minutes (see its own Javadoc)
         new CappedConcurrencyLoadE2E().run();
         new ForegroundReservationE2E().run();   // ~3 minutes
+        new SubmitOrderPreservedE2E().run();    // ~3.5 minutes
         // JobResultTtlE2E (~70 minutes) is NOT run here — see its own Javadoc.
         // ReservationStarvationBugE2E is NOT run here either: it now passes (the bug is
         // fixed), but still takes ~3.5 minutes — see JobQueueReservationStarvationBug_260819_oo01.

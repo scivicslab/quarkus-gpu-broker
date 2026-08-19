@@ -1,5 +1,6 @@
 package com.scivicslab.gpubroker.e2e;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -23,6 +24,15 @@ import io.restassured.RestAssured;
  * ~1000 tokens (a long-essay prompt) reliably takes ~15s on this node,
  * giving comfortable headroom for job2/job3, fired 100ms apart, to land as
  * {@code pending} behind it without any polling.
+ *
+ * <p>job3 (foreground) being dispatched itself re-reserves the worker for
+ * another 3 minutes (see {@code NodeReservation_260810_oo01}) — the same
+ * worker job2 (background) is waiting behind. So job2's own completion is
+ * genuinely delayed by up to that full reservation window; only job1 and
+ * job3 are awaited on the short timeout, job2 gets a much longer one.
+ * See {@code JobQueueReservationStarvationBug_260819_oo01} for why this
+ * is not itself a bug: it eventually resolves via periodic reconciliation,
+ * not instantly.
  */
 class PriorityOrderingE2E extends GpuBrokerE2EBase {
 
@@ -56,7 +66,12 @@ class PriorityOrderingE2E extends GpuBrokerE2EBase {
             job3CompletedAt.set(System.nanoTime());
         });
 
-        CompletableFuture.allOf(job1, job2, job3).get(30, TimeUnit.SECONDS);
+        // 60s, not 30s: real inference latency for job1's ~1000-token essay varies with
+        // cluster load, and job3 cannot even start until job1 finishes.
+        CompletableFuture.allOf(job1, job3).get(60, TimeUnit.SECONDS);
+        // job2 is delayed by job3's own re-reservation of the worker (see class Javadoc) —
+        // give it up to the full reservation window plus a reconciliation margin.
+        job2.get(Duration.ofMinutes(3).plusSeconds(45).toSeconds(), TimeUnit.SECONDS);
 
         require(job3CompletedAt.get() < job2CompletedAt.get(),
                 "foreground job (job3) must complete before the earlier-queued background job (job2)");

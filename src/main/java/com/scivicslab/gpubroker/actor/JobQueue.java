@@ -107,18 +107,41 @@ public final class JobQueue {
         worker.tell(w -> w.assign(job));
     }
 
-    /** Enqueue a job. Returns the id of the AiServiceEndpoint to hand it to now, or null if parked. */
+    /**
+     * Enqueue a job, in its priority's position. Returns the id of the endpoint to hand it
+     * to now, or null if parked.
+     *
+     * <p>Always dispatches {@link #deque}'s front, not necessarily {@code job} itself — an
+     * older, same-or-lower-priority job already waiting there is served first. If that
+     * front job is {@code job}, its endpointId is returned so the caller dispatches it
+     * (the common, uncontended case, needing no help from {@link #system}). Otherwise this
+     * method dispatches the older front job itself (see {@link #dispatch}) and returns
+     * null — {@code job} stays queued for a later turn. Without this check, a newly idle
+     * endpoint would always go to whichever job happens to arrive next, silently starving
+     * anything already waiting — see {@code JobQueueReservationStarvationBug_260819_oo01}.
+     */
     public String submit(Job job) {
-        String endpointId = pollIdleEndpoint(job.priority());
-        if (endpointId != null) {
-            reserveIfForeground(endpointId, job);
-            return endpointId;
-        }
         if (job.priority() == Priority.FOREGROUND) {
             deque.addFirst(job);
         } else {
             deque.addLast(job);
         }
+        return dispatchFront(job);
+    }
+
+    /** Hands {@link #deque}'s front to an eligible idle endpoint, if any. See {@link #submit}. */
+    private String dispatchFront(Job justSubmitted) {
+        Job front = deque.peekFirst();
+        String endpointId = pollIdleEndpoint(front.priority());
+        if (endpointId == null) {
+            return null;
+        }
+        deque.pollFirst();
+        reserveIfForeground(endpointId, front);
+        if (front == justSubmitted) {
+            return endpointId;
+        }
+        dispatch(endpointId, front);
         return null;
     }
 

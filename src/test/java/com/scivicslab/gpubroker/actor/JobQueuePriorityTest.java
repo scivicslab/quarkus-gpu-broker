@@ -17,13 +17,19 @@ import com.scivicslab.gpubroker.model.Priority;
 import com.scivicslab.gpubroker.model.QueueSnapshot;
 import com.scivicslab.gpubroker.model.RecordingResponseSink;
 import com.scivicslab.gpubroker.model.RequestBody;
+import com.scivicslab.pojoactor.core.ActorRef;
+import com.scivicslab.pojoactor.core.ActorSystem;
 
 /**
- * Pure-POJO tests of {@link JobQueue}: priority ordering, immediate dispatch
- * to an idle endpoint, FG-reservation, and graceful-drain support. No
- * ActorSystem involved — {@code submit}/{@code requestWork}/{@code attach}
- * are called directly, exactly as a wrapping {@code ActorRef} would call
- * them one at a time.
+ * Tests of {@link JobQueue}: priority ordering, immediate dispatch to an
+ * idle endpoint, FG-reservation, and graceful-drain support. {@code
+ * submit}/{@code requestWork}/{@code attach} are called directly, exactly
+ * as a wrapping {@code ActorRef} would call them one at a time — no
+ * {@code ActorSystem} needed for most of them. The one exception is {@link
+ * #reservedEndpointBackgroundJob_dispatchedOnceItIsFrontOfDeque}: since
+ * {@link JobQueue#submit} can now dispatch an older, already-queued job
+ * itself (see {@code JobQueueReservationStarvationBug_260819_oo01}), that
+ * one test binds a real, minimal {@code ActorSystem} to observe it.
  */
 @DisplayName("JobQueue — priority, dispatch, reservation, drain")
 class JobQueuePriorityTest {
@@ -67,11 +73,42 @@ class JobQueuePriorityTest {
 
         // e1 is the only idle endpoint, but it is reserved: a BG submit must not go to it.
         assertNull(queue.submit(job(Priority.BACKGROUND, "b1")));   // queued instead of dispatched
+    }
+
+    /**
+     * Once the reservation lapses, {@code b1} — already queued first — must be dispatched
+     * ahead of any job submitted afterward, even though the endpoint only becomes eligible
+     * again at the moment the later submit happens. {@code submit} has no caller-supplied
+     * job to hand back an endpointId for in this case (the endpoint goes to {@code b1}, not
+     * to the job just submitted), so it dispatches {@code b1} itself — the reason this one
+     * test needs a real {@code ActorSystem} bound via {@link JobQueue#bind}.
+     */
+    @Test
+    void reservedEndpointBackgroundJob_dispatchedOnceItIsFrontOfDeque() throws InterruptedException {
+        ActorSystem system = new ActorSystem("job-queue-priority-test");
+        JobQueue queue = new JobQueue(Duration.ofMillis(50));
+        queue.bind(system, null);   // self is only used by startReconciliation(), not exercised here
+
+        LatchAiServiceClient client = new LatchAiServiceClient();
+        AiServiceEndpointWorker worker = new AiServiceEndpointWorker("unused-queue-name", "e1", client, "/path");
+        ActorRef<AiServiceEndpointWorker> workerRef = system.actorOf("e1", worker);
+        workerRef.tell(w -> w.bind(system, workerRef)).join();
+
+        queue.attach("e1");
+        queue.submit(job(Priority.FOREGROUND, "f1"));   // e1 idle → dispatched immediately, e1 now reserved
+        queue.requestWork("e1");                        // e1 "finishes" f1 and parks idle again (still reserved)
+        Job b1 = job(Priority.BACKGROUND, "b1");
+        assertNull(queue.submit(b1));                   // e1 still reserved → b1 queued, not dispatched
 
         sleepPastReservation();
 
-        // Reservation lapsed: e1 (still idle, still the only endpoint) takes a BG job immediately.
-        assertEquals("e1", queue.submit(job(Priority.BACKGROUND, "b2")));
+        // Reservation lapsed: e1 becomes eligible again, but b1 — not the job submitted here
+        // — is the one dispatched, since it was already waiting. JobQueue dispatches it itself.
+        assertNull(queue.submit(job(Priority.BACKGROUND, "b2")));
+        client.awaitStarted(LatchAiServiceClient.label(b1));   // blocks until e1 actually received b1
+
+        client.completeAll();
+        system.terminate();
     }
 
     private static void sleepPastReservation() {
