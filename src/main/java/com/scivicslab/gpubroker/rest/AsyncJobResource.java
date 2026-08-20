@@ -30,6 +30,11 @@ import jakarta.ws.rs.core.Response;
  *
  * <p>{@code @Blocking} because {@link #submit} calls {@code join()} on the
  * queue ask — safe on a worker thread, not on the I/O thread.
+ *
+ * <p>Unlike {@code ProxyResource}, this path does not block the caller, so
+ * nothing here naturally limits how many jobs one submitter can push in —
+ * see {@code BackgroundJobAdmissionControl_260820_oo01}. {@link
+ * #admission} bounds it per {@code (X-Submitter-Id, queueName)}.
  */
 @Path("/jobs/{queueName}")
 public class AsyncJobResource {
@@ -43,11 +48,15 @@ public class AsyncJobResource {
     @Inject
     JobResultStore results;
 
+    @Inject
+    SubmissionAdmissionControl admission;
+
     @POST
     @Blocking
     public Response submit(@PathParam("queueName") String queueName, byte[] rawBody,
                             @HeaderParam("Content-Type") String contentType,
-                            @HeaderParam("X-Job-Priority") @DefaultValue("background") String priorityHeader) {
+                            @HeaderParam("X-Job-Priority") @DefaultValue("background") String priorityHeader,
+                            @HeaderParam("X-Submitter-Id") @DefaultValue("unknown") String submitterId) {
         if (queues.isDraining()) {
             return Response.status(503).build();
         }
@@ -57,9 +66,15 @@ public class AsyncJobResource {
             return Response.status(404).build();
         }
 
+        if (!admission.tryAdmit(submitterId, queueName)) {
+            return Response.status(429).build();
+        }
+
         String jobId = results.register();
         Priority priority = Priority.fromHeader(priorityHeader);
-        Job job = Job.first(new RequestBody(rawBody, contentType), priority, new PolledResponseSink(jobId, results));
+        PolledResponseSink sink = new PolledResponseSink(jobId, results);
+        Job job = Job.first(new RequestBody(rawBody, contentType), priority,
+                new AdmissionReleasingResponseSink(sink, () -> admission.release(submitterId, queueName)));
 
         String endpointId = queue.ask(q -> q.submit(job)).join();
         if (endpointId != null) {
