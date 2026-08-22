@@ -14,6 +14,7 @@ class EndpointProbeTest {
     private final YomiTokuOcrProbe yomiTokuOcr = new YomiTokuOcrProbe();
     private final MarkerOcrProbe markerOcr = new MarkerOcrProbe();
     private final EmbeddingProbe embedding = new EmbeddingProbe();
+    private final WhisperTranscriptProbe whisperTranscript = new WhisperTranscriptProbe();
 
     @Test
     void vllmChat_derivesQueueNameFromModelsResponse() {
@@ -49,6 +50,7 @@ class EndpointProbeTest {
         assertEquals("yomitoku-ocr", yomiTokuOcr.deriveQueueName("anything").orElseThrow());
         assertEquals("marker-ocr", markerOcr.deriveQueueName("anything").orElseThrow());
         assertEquals("embedding-e5large", embedding.deriveQueueName("anything").orElseThrow());
+        assertEquals("whisper-transcript", whisperTranscript.deriveQueueName("anything").orElseThrow());
     }
 
     @Test
@@ -63,6 +65,9 @@ class EndpointProbeTest {
         assertEquals("/", markerOcr.probePath());
         assertEquals(8012, embedding.conventionalPort());
         assertEquals("/", embedding.probePath());
+        assertEquals(8003, whisperTranscript.conventionalPort());
+        // Unlike YomiToku/Marker/embedding, "/" 404s on this FastAPI app and "/health" answers instead.
+        assertEquals("/health", whisperTranscript.probePath());
     }
 
     @Test
@@ -71,6 +76,7 @@ class EndpointProbeTest {
         assertEquals("/ocr", yomiTokuOcr.requestPath());
         assertEquals("/marker/upload", markerOcr.requestPath());
         assertEquals("/v1/embeddings", embedding.requestPath());
+        assertEquals("/transcript", whisperTranscript.requestPath());
     }
 
     @Test
@@ -79,5 +85,6 @@ class EndpointProbeTest {
         assertEquals(1, yomiTokuOcr.defaultMaxConcurrency());
         assertEquals(1, markerOcr.defaultMaxConcurrency());
         assertEquals(8, embedding.defaultMaxConcurrency());
+        assertEquals(1, whisperTranscript.defaultMaxConcurrency());
     }
 }
