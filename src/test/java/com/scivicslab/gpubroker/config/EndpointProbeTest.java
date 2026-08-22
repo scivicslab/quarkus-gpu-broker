@@ -46,6 +46,22 @@ class EndpointProbeTest {
     }
 
     @Test
+    void vllmChat_displayNameIsTheUnsanitizedModelId() {
+        // Unlike deriveQueueName, deriveDisplayName must keep the "/" -- OpenAiCompatResource's
+        // GET /v1/models advertises this id, and a client echoing it back must reach the
+        // downstream vLLM with a "model" value the server itself recognizes.
+        String body = "{\"object\":\"list\",\"data\":[{\"id\":\"google/gemma-4-26B-A4B-it\",\"object\":\"model\"}]}";
+
+        assertEquals("google/gemma-4-26B-A4B-it", vllmChat.deriveDisplayName(body).orElseThrow());
+    }
+
+    @Test
+    void fixedFunctionKinds_displayNameDefaultsToQueueName() {
+        assertEquals(yomiTokuOcr.deriveQueueName("anything"), yomiTokuOcr.deriveDisplayName("anything"));
+        assertEquals(embedding.deriveQueueName("anything"), embedding.deriveDisplayName("anything"));
+    }
+
+    @Test
     void fixedFunctionKinds_deriveFixedQueueNames_regardlessOfProbeBody() {
         assertEquals("yomitoku-ocr", yomiTokuOcr.deriveQueueName("anything").orElseThrow());
         assertEquals("marker-ocr", markerOcr.deriveQueueName("anything").orElseThrow());

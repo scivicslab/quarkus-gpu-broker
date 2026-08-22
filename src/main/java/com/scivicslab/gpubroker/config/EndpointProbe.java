@@ -49,6 +49,18 @@ public interface EndpointProbe {
     /** Interpret a successful probe's response body into a {@code queueName}, or empty if the shape doesn't match. */
     Optional<String> deriveQueueName(String probeResponseBody);
 
+    /**
+     * The human/client-facing identifier for this endpoint's model, as the downstream service
+     * itself knows it (e.g. {@code google/gemma-4-26B-A4B-it}) -- distinct from {@link
+     * #deriveQueueName}'s sanitized, path-segment-safe form. Defaults to {@link #deriveQueueName}
+     * itself, which is already a fine display name for the fixed-function kinds (OCR, embedding).
+     * {@link VllmChatProbe} overrides this to return the true, unsanitized model id -- see {@code
+     * OpenAiCompatFacade_260822_oo01} "なぜ表示名にサニタイズ前のモデルIDが要るか".
+     */
+    default Optional<String> deriveDisplayName(String probeResponseBody) {
+        return deriveQueueName(probeResponseBody);
+    }
+
     /** Default {@code maxConcurrency} for this kind; {@code broker.capabilities.<host:port>.max-concurrency} overrides it per instance. */
     int defaultMaxConcurrency();
 
@@ -98,7 +110,8 @@ public interface EndpointProbe {
         if (queueName.isEmpty() || !requestPathExists(address)) {
             return Optional.empty();
         }
-        return Optional.of(new EndpointInfo(address, queueName.get(), resolveMaxConcurrency(address, capabilities)));
+        String displayName = deriveDisplayName(response.body()).orElse(queueName.get());
+        return Optional.of(new EndpointInfo(address, queueName.get(), displayName, resolveMaxConcurrency(address, capabilities)));
     }
 
     /**

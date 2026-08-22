@@ -36,7 +36,14 @@ public class VllmChatProbe implements EndpointProbe {
 
     @Override
     public Optional<String> deriveQueueName(String probeResponseBody) {
-        return extractModelName(probeResponseBody).map(id -> "vllm-" + sanitizeForPathSegment(id));
+        return extractModelName(probeResponseBody).map(VllmQueueName::of);
+    }
+
+    /** The true, unsanitized model id (e.g. {@code google/gemma-4-26B-A4B-it}) -- see {@code
+     *  OpenAiCompatFacade_260822_oo01} "なぜ表示名にサニタイズ前のモデルIDが要るか". */
+    @Override
+    public Optional<String> deriveDisplayName(String probeResponseBody) {
+        return extractModelName(probeResponseBody);
     }
 
     /** Extract the first model id out of an OpenAI-compatible /v1/models response. Empty if the shape doesn't match. */
@@ -48,14 +55,5 @@ public class VllmChatProbe implements EndpointProbe {
         } catch (JsonProcessingException e) {
             return Optional.empty();
         }
-    }
-
-    /**
-     * A model id such as {@code google/gemma-4-26B-A4B-it} is not a safe single
-     * {@code /queue/{queueName}} path segment as-is — the {@code /} would split it into two
-     * segments. Replace anything outside the URL path-segment-safe unreserved set with {@code -}.
-     */
-    private static String sanitizeForPathSegment(String raw) {
-        return raw.replaceAll("[^A-Za-z0-9._-]", "-");
     }
 }

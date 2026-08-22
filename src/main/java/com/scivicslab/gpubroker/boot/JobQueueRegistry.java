@@ -68,6 +68,9 @@ public class JobQueueRegistry {
     AiServiceEndpointBuilder builder;
 
     private final Map<String, ActorRef<JobQueue>> queues = new ConcurrentHashMap<>();
+    /** {@code queueName} -> {@link EndpointInfo#displayName}, for {@code OpenAiCompatResource}'s
+     *  {@code GET /v1/models} -- see {@code OpenAiCompatFacade_260822_oo01}. */
+    private final Map<String, String> displayNames = new ConcurrentHashMap<>();
     private final AtomicBoolean draining = new AtomicBoolean(false);
 
     void onStart(@Observes StartupEvent event) {
@@ -129,6 +132,12 @@ public class JobQueueRegistry {
                 .toList();
     }
 
+    /** {@code queueName} -> {@link EndpointInfo#displayName}, for {@code OpenAiCompatResource}'s
+     *  {@code GET /v1/models}. */
+    public Map<String, String> displayNames() {
+        return Map.copyOf(displayNames);
+    }
+
     private void registerEndpoint(ActorRef<ROOT> root, EndpointProbe probe, EndpointInfo info) {
         boolean[] isNewQueue = {false};
         ActorRef<JobQueue> queue = queues.computeIfAbsent(info.queueName(), n -> {
@@ -136,6 +145,7 @@ public class JobQueueRegistry {
             return root.createChild(n, new JobQueue());
         });
         if (isNewQueue[0]) {
+            displayNames.put(info.queueName(), info.displayName());
             queue.tell(q -> q.bind(system, queue));
             queue.tell(JobQueue::startReconciliation);
         }
