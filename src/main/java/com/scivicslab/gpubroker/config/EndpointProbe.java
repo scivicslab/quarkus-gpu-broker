@@ -94,8 +94,40 @@ public interface EndpointProbe {
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             return Optional.empty();
         }
-        return deriveQueueName(response.body())
-                .map(queueName -> new EndpointInfo(address, queueName, resolveMaxConcurrency(address, capabilities)));
+        Optional<String> queueName = deriveQueueName(response.body());
+        if (queueName.isEmpty() || !requestPathExists(address)) {
+            return Optional.empty();
+        }
+        return Optional.of(new EndpointInfo(address, queueName.get(), resolveMaxConcurrency(address, capabilities)));
+    }
+
+    /**
+     * Whether {@link #requestPath()} actually exists at {@code address} — {@link #probePath()}
+     * succeeding is not enough evidence by itself: a node can answer a generic health check (e.g.
+     * {@code "/"}) while running a service with a different, incompatible API shape than the one
+     * {@code requestPath()} names. A bare {@code GET} on {@code requestPath()} cannot exercise a
+     * real request (most of these paths only accept {@code POST}), so this only distinguishes "the
+     * path exists" ({@code 2xx}, or {@code 405} for a path that rejects {@code GET} specifically)
+     * from "the path does not exist" ({@code 404} or anything else) — verified against every
+     * currently-known-good node for every {@code EndpointProbe} kind, which all return {@code 405}
+     * here (see {@code EmbeddingDiscoveryFix_260822_oo01}).
+     */
+    private boolean requestPathExists(String address) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://" + address + requestPath()))
+                .timeout(PROBE_TIMEOUT)
+                .GET()
+                .build();
+        try {
+            HttpResponse<Void> response = PROBE_CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
+            int status = response.statusCode();
+            return (status >= 200 && status < 300) || status == 405;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private int resolveMaxConcurrency(String address, Map<String, BrokerConfig.EndpointCapability> capabilities) {

@@ -47,6 +47,12 @@ class EndpointProbeSurveyTest {
                 out.write(body);
             }
         });
+        // A real request path that exists but rejects GET (405) -- what every currently-known-good
+        // node returns for its own requestPath() (see EmbeddingDiscoveryFix_260822_oo01).
+        server.createContext("/real-request-path", exchange -> {
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+        });
         server.start();
         probe = new FakeProbe(server.getAddress().getPort());
     }
@@ -88,8 +94,38 @@ class EndpointProbeSurveyTest {
         assertTrue(found.isEmpty());
     }
 
-    /** A minimal {@code EndpointProbe} whose port is chosen at test time, unlike the real kinds' fixed ports. */
-    private record FakeProbe(int conventionalPort) implements EndpointProbe {
+    @Test
+    @DisplayName("probePath succeeding is not enough: requestPath must exist (405 on GET) too")
+    void requestPathReturning405_isTreatedAsExisting_nodeIsRegistered() {
+        FakeProbe realRequestPath = new FakeProbe(server.getAddress().getPort(), "/real-request-path");
+
+        List<EndpointInfo> found = realRequestPath.survey(List.of("127.0.0.1"), Map.of());
+
+        assertEquals(1, found.size(), "requestPath answering 405 to GET means the path exists — node should register");
+    }
+
+    @Test
+    @DisplayName("a probePath that answers but a requestPath that 404s means the node is a different, incompatible service")
+    void requestPathMissing_nodeIsExcluded_evenThoughProbePathSucceeded() {
+        FakeProbe wrongRequestPath = new FakeProbe(server.getAddress().getPort(), "/no-such-path-on-this-server");
+
+        List<EndpointInfo> found = wrongRequestPath.survey(List.of("127.0.0.1"), Map.of());
+
+        assertTrue(found.isEmpty(),
+                "probePath succeeded but requestPath 404s -- this is the 192.168.5.14:8012 bug "
+                        + "(EmbeddingDiscoveryFix_260822_oo01): a node can pass a generic health check "
+                        + "while running an incompatible service, and must not be registered");
+    }
+
+    /** A minimal {@code EndpointProbe} whose port is chosen at test time, unlike the real kinds' fixed
+     *  ports. {@code requestPathValue} defaults to the same {@code /probe} path {@code probePath()}
+     *  uses, so existing tests (which don't care about the {@code requestPath} distinction) are
+     *  unaffected; tests exercising that distinction pass a different value explicitly. */
+    private record FakeProbe(int conventionalPort, String requestPathValue) implements EndpointProbe {
+        FakeProbe(int conventionalPort) {
+            this(conventionalPort, "/probe");
+        }
+
         @Override
         public String probePath() {
             return "/probe";
@@ -97,7 +133,7 @@ class EndpointProbeSurveyTest {
 
         @Override
         public String requestPath() {
-            return "/probe";
+            return requestPathValue;
         }
 
         @Override
