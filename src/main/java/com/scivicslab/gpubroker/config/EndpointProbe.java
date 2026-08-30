@@ -118,25 +118,33 @@ public interface EndpointProbe {
      * Whether {@link #requestPath()} actually exists at {@code address} — {@link #probePath()}
      * succeeding is not enough evidence by itself: a node can answer a generic health check (e.g.
      * {@code "/"}) while running a service with a different, incompatible API shape than the one
-     * {@code requestPath()} names. A bare {@code GET} on {@code requestPath()} cannot exercise a
-     * real request (most of these paths only accept {@code POST}), so this only distinguishes "the
-     * path exists" ({@code 2xx}, or {@code 405} for a path that rejects {@code GET} specifically)
-     * from "the path does not exist" ({@code 404} or anything else) — verified against every
-     * currently-known-good node for every {@code EndpointProbe} kind, which all return {@code 405}
-     * here (see {@code EmbeddingDiscoveryFix_260822_oo01}).
+     * {@code requestPath()} names (see {@code EmbeddingDiscoveryFix_260822_oo01}).
+     *
+     * <p>Probes with an empty-body {@code POST} rather than a {@code GET}. A {@code GET} answer is
+     * not portable across server implementations: vLLM returns {@code 405} for a path that only
+     * accepts {@code POST}, but llama.cpp's {@code llama-server} registers {@code POST} only and
+     * returns {@code 404} for the same, existing path — indistinguishable from a path that is
+     * genuinely absent. An empty-body {@code POST} separates the two cases on every implementation
+     * measured: the path exists and rejects the body ({@code 400} on vLLM and llama.cpp
+     * {@code /v1/chat/completions}, {@code 422} on the embedding server {@code /v1/embeddings}),
+     * versus the path does not exist ({@code 404} on all of them). So {@code 404} means absent and
+     * any other status means present.
+     *
+     * <p>An empty body never starts real work: every kind's handler rejects it during validation,
+     * before any model is touched.
      */
     private boolean requestPathExists(String address) {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("http://" + address + requestPath()))
                 .timeout(PROBE_TIMEOUT)
-                .GET()
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
                 .build();
         try {
             HttpResponse<Void> response = PROBE_CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
-            int status = response.statusCode();
-            return (status >= 200 && status < 300) || status == 405;
+            return response.statusCode() != 404;
         } catch (IOException e) {
-            return false;
+            return false;   // not reachable — not this kind at this address
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
