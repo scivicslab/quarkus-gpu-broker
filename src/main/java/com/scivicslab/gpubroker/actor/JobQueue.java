@@ -138,7 +138,7 @@ public final class JobQueue {
         if (endpointId == null) {
             return null;
         }
-        deque.pollFirst();
+        takeFront();
         reserveIfForeground(endpointId, front);
         if (front == justSubmitted) {
             return endpointId;
@@ -223,9 +223,22 @@ public final class JobQueue {
     private Job pollWork(String endpointId) {
         if (isReserved(endpointId)) {
             Job front = deque.peekFirst();
-            return (front != null && front.priority() == Priority.FOREGROUND) ? deque.pollFirst() : null;
+            return (front != null && front.priority() == Priority.FOREGROUND) ? takeFront() : null;
         }
-        return deque.pollFirst();
+        return takeFront();
+    }
+
+    /**
+     * Removes the front job and tells it that it is no longer queued. The one place a job
+     * leaves {@link #deque} on its way to a worker — {@link #drainPending} is the other way
+     * out and deliberately does not report a dispatch, since those jobs never reach one.
+     */
+    private Job takeFront() {
+        Job job = deque.pollFirst();
+        if (job != null) {
+            job.responseSink().dispatched();
+        }
+        return job;
     }
 
     private void reserveIfForeground(String endpointId, Job job) {
