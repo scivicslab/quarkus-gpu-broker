@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -150,6 +151,59 @@ class StatusPageRendererTest {
         String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
 
         assertFalse(html.contains("(declared)"));
+    }
+
+
+    /** The current bar's full width is the slot count, so a full bar means every slot is busy. */
+    @Test
+    void currentBarIsScaledToTheSlotCount() {
+        QueueStatus status = new QueueStatus("q", new QueueSnapshot(
+                List.of("a:1#0", "a:1#1"), List.of("a:1#2", "a:1#3"), 0, 0, 0));
+
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+
+        assertTrue(html.contains("4 slots"), "the bar's ceiling is named as the slot count");
+    }
+
+    /** The axis must read in round numbers, not in whatever the peak happened to be. */
+    @Test
+    void axisCeilingIsARoundNumber() {
+        assertEquals(1.0, StatusPageRenderer.niceCeiling(0.9));
+        assertEquals(1.0, StatusPageRenderer.niceCeiling(1.0));
+        assertEquals(2.0, StatusPageRenderer.niceCeiling(1.1));
+        assertEquals(5.0, StatusPageRenderer.niceCeiling(4.2));
+        assertEquals(10.0, StatusPageRenderer.niceCeiling(7.0));
+        assertEquals(20.0, StatusPageRenderer.niceCeiling(11.0));
+        assertEquals(100.0, StatusPageRenderer.niceCeiling(51.0));
+    }
+
+    /** Waiting jobs and completed jobs are both counted in jobs, so they share one axis. */
+    @Test
+    void queueAndThroughputSharesOneAxisAndUtilizationIsAPercentage() {
+        StatusHistoryStore history = new StatusHistoryStore(null);
+        Instant t = Instant.parse("2026-09-05T12:00:00Z");
+        history.record(t, List.of(), List.of(new QueueStatus("q",
+                new QueueSnapshot(List.of("a:1#0"), List.of("a:1#1"), 6, 0, 0))));
+        QueueStatus now = new QueueStatus("q", new QueueSnapshot(List.of("a:1#0"), List.of("a:1#1"), 6, 0, 0));
+
+        String html = StatusPageRenderer.render(List.of(now), Map.of(), history);
+
+        assertTrue(html.contains("waiting and done"));
+        assertTrue(html.contains("jobs &mdash; area: waiting, line: done per 10 min"));
+        assertTrue(html.contains("slot utilization"));
+        assertTrue(html.contains("% of 2 slots"));
+        assertTrue(html.contains("100%"), "the utilization axis is labelled 0/50/100 percent");
+        assertTrue(html.contains("50%"));
+    }
+
+    /** The header has to say what changes when, since three different intervals are in play. */
+    @Test
+    void headerNamesEachUpdateInterval() {
+        String html = StatusPageRenderer.render(List.of(), Map.of(), emptyHistory());
+
+        assertTrue(html.contains("reload every 10s"));
+        assertTrue(html.contains("probed every minute"));
+        assertTrue(html.contains("one step every 10 min"));
     }
 
     private static int countOccurrences(String haystack, String needle) {

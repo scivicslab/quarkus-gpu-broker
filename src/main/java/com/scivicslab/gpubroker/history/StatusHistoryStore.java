@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -254,17 +255,38 @@ public class StatusHistoryStore {
             return false;
         }
         if ("queue".equals(node.path("kind").asText())) {
-            closedQueueBuckets.computeIfAbsent(node.path("queue").asText(), n -> new ArrayDeque<>())
-                    .addLast(new QueueBucket(node.path("queue").asText(), bucketStart,
-                            node.path("samples").asInt(), node.path("activeSum").asLong(),
-                            node.path("idleSum").asLong(), node.path("pendingSum").asLong(),
-                            node.path("completed").asLong(), node.path("failed").asLong()));
+            QueueBucket restored = new QueueBucket(node.path("queue").asText(), bucketStart,
+                    node.path("samples").asInt(), node.path("activeSum").asLong(),
+                    node.path("idleSum").asLong(), node.path("pendingSum").asLong(),
+                    node.path("completed").asLong(), node.path("failed").asLong());
+            Deque<QueueBucket> buckets = closedQueueBuckets.computeIfAbsent(restored.queueName(), n -> new ArrayDeque<>());
+            QueueBucket sameWindow = removeSameWindow(buckets, restored.bucketStart(), QueueBucket::bucketStart);
+            buckets.addLast(sameWindow == null ? restored : sameWindow.mergedWith(restored));
         } else {
-            closedEndpointBuckets.computeIfAbsent(node.path("address").asText(), a -> new ArrayDeque<>())
-                    .addLast(new EndpointBucket(node.path("address").asText(), node.path("queue").asText(),
-                            bucketStart, node.path("probeOk").asInt(), node.path("probeTotal").asInt()));
+            EndpointBucket restored = new EndpointBucket(node.path("address").asText(), node.path("queue").asText(),
+                    bucketStart, node.path("probeOk").asInt(), node.path("probeTotal").asInt());
+            Deque<EndpointBucket> buckets = closedEndpointBuckets.computeIfAbsent(restored.address(), a -> new ArrayDeque<>());
+            EndpointBucket sameWindow = removeSameWindow(buckets, restored.bucketStart(), EndpointBucket::bucketStart);
+            buckets.addLast(sameWindow == null ? restored : sameWindow.mergedWith(restored));
         }
         return true;
+    }
+
+    /**
+     * Takes out the bucket already restored for {@code bucketStart}, if the file holds a second
+     * row for the same ten-minute window. Restarting inside a window produces exactly that: the
+     * stopping instance flushes its partial bucket and the starting instance opens its own.
+     */
+    private static <T> T removeSameWindow(Deque<T> buckets, Instant bucketStart,
+                                          java.util.function.Function<T, Instant> startOf) {
+        for (Iterator<T> it = buckets.iterator(); it.hasNext(); ) {
+            T bucket = it.next();
+            if (startOf.apply(bucket).equals(bucketStart)) {
+                it.remove();
+                return bucket;
+            }
+        }
+        return null;
     }
 
     private String toLine(QueueBucket bucket) {

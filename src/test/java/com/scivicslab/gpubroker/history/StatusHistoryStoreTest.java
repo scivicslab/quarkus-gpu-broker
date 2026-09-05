@@ -189,6 +189,54 @@ class StatusHistoryStoreTest {
         assertEquals(List.of("10.0.0.1:8000", "10.0.0.2:8000"), store.addressesOf("q"));
     }
 
+
+    /**
+     * Restarting inside a ten-minute window leaves two rows for that window: the stopping
+     * instance flushes its partial bucket and the starting instance opens its own. Restored
+     * separately they would draw as two columns at the same instant, shifting everything after.
+     */
+    @Test
+    void twoRowsForTheSameWindow_areMergedIntoOneBucketOnLoad() {
+        Path file = directory.resolve("history.jsonl");
+        StatusHistoryStore first = new StatusHistoryStore(file);
+        first.record(NOON, probes(true), List.of(status("q", 2, 0, 4, 0, 0)));
+        first.flush();                                    // the stopping instance
+
+        StatusHistoryStore second = new StatusHistoryStore(file);
+        second.record(NOON.plus(Duration.ofMinutes(1)), probes(true), List.of(status("q", 4, 0, 8, 0, 0)));
+        second.flush();                                   // the starting instance, same window
+
+        StatusHistoryStore restarted = new StatusHistoryStore(file);
+        restarted.load(NOON.plus(Duration.ofMinutes(2)));
+
+        List<QueueBucket> history = restarted.queueHistory("q");
+        assertEquals(1, history.size(), "one window, one bucket");
+        assertEquals(2, history.get(0).sampleCount());
+        assertEquals(3.0, history.get(0).activeAverage());
+        assertEquals(6.0, history.get(0).pendingAverage());
+        assertEquals(1, restarted.endpointHistory("10.0.0.1:8000").size());
+        assertEquals(2, restarted.endpointHistory("10.0.0.1:8000").get(0).probeTotal());
+    }
+
+    @Test
+    void utilizationIsBusySlotsOverAttachedSlots() {
+        StatusHistoryStore store = new StatusHistoryStore(null);
+
+        store.record(NOON, List.of(), List.of(status("q", 3, 1, 0, 0, 0)));
+
+        assertEquals(4.0, store.queueHistory("q").get(0).totalSlotsAverage());
+        assertEquals(75.0, store.queueHistory("q").get(0).utilizationPercent());
+    }
+
+    @Test
+    void utilizationIsZero_whenTheQueueHasNoSlot() {
+        StatusHistoryStore store = new StatusHistoryStore(null);
+
+        store.record(NOON, List.of(), List.of(status("q", 0, 0, 5, 0, 0)));
+
+        assertEquals(0.0, store.queueHistory("q").get(0).utilizationPercent());
+    }
+
     private static List<ProbeObservation> probes(boolean responded) {
         return List.of(new ProbeObservation("10.0.0.1:8000", "q", responded));
     }

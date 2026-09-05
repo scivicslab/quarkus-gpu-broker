@@ -2,8 +2,6 @@ package com.scivicslab.gpubroker.rest;
 
 import java.util.List;
 import java.util.Map;
-import java.util.SortedSet;
-import java.util.TreeSet;
 
 import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.history.EndpointBucket;
@@ -48,7 +46,9 @@ final class StatusPageRenderer {
                 .append("<title>gpu-broker status</title>")
                 .append(style())
                 .append("</head><body><header><h1>gpu-broker</h1>")
-                .append("<p class=\"sub\">liveness and congestion, last 24 hours &middot; refreshes every 10s</p>")
+                .append("<p class=\"sub\">the numbers below reload every 10s &middot; ")
+                .append("liveness is probed every minute &middot; the charts gain one step every 10 min, ")
+                .append("covering 24 hours</p>")
                 .append("</header><main>");
 
         if (statuses.isEmpty()) {
@@ -90,6 +90,11 @@ final class StatusPageRenderer {
                 + "h2{margin:0 0 0.4rem;font-size:0.78rem;font-weight:600;text-transform:uppercase;"
                 + "letter-spacing:0.06em;color:var(--muted)}"
                 + "svg{display:block;width:100%;height:auto}"
+                + ".chart{display:flex;gap:0.45rem;align-items:stretch}"
+                + ".yaxis{width:3.4rem;flex:none;display:flex;flex-direction:column;justify-content:space-between;text-align:right;font-size:0.7rem;color:var(--muted);font-variant-numeric:tabular-nums}"
+                + ".plot{flex:1;min-width:0}"
+                + ".plot svg{width:100%;height:100%;display:block}"
+                + ".unit{font-size:0.7rem;color:var(--muted);margin-bottom:0.15rem}"
                 + ".bands{display:flex;flex-direction:column;gap:0.3rem}"
                 + ".band{display:flex;align-items:center;gap:0.7rem}"
                 + ".addr{width:16rem;flex:none;font-variant-numeric:tabular-nums;font-size:0.82rem;"
@@ -115,8 +120,9 @@ final class StatusPageRenderer {
                 .append("<span>done <b>").append(completedLastHour).append("</b> <small>jobs/h</small></span>")
                 .append("</span></div>");
 
-        appendCurrentBar(card, s, peakOf(buckets, s));
-        appendCongestionChart(card, buckets);
+        appendCurrentBar(card, s);
+        appendQueueAndThroughputChart(card, buckets);
+        appendUtilizationChart(card, buckets, s);
         appendLivenessBands(card, status, history, capabilities);
 
         card.append("</div>");
@@ -135,68 +141,107 @@ final class StatusPageRenderer {
     }
 
     /**
-     * The current reading as a bar whose full width is the highest total this queue reached in
-     * the last 24 hours, so its length reads as a quantity rather than a ratio — see {@code
-     * StatusHistory_260905_oo01} "なぜ棒の全幅を24時間の最大値に取るか".
+     * The current reading as a bar whose full width is the queue's slot count, so a full bar
+     * means every slot is busy. Pending is drawn beyond the slot count when the backlog exceeds
+     * capacity — that overflow is exactly what a reader wants to see.
      */
-    private static void appendCurrentBar(StringBuilder card, QueueSnapshot s, double peak) {
+    private static void appendCurrentBar(StringBuilder card, QueueSnapshot s) {
+        int slots = Math.max(1, s.activeCount() + s.idleCount());
+        double full = Math.max(slots, s.activeCount() + s.idleCount() + s.pendingCount());
         card.append("<div class=\"now\">");
-        appendSegment(card, "--active", s.activeCount(), peak);
-        appendSegment(card, "--pending", s.pendingCount(), peak);
-        appendSegment(card, "--idle", s.idleCount(), peak);
-        card.append("</div><div class=\"scale\"><span>0</span><span>peak 24h ")
-                .append(Math.round(peak)).append(" slots</span></div>");
+        appendSegment(card, "--active", s.activeCount(), full);
+        appendSegment(card, "--pending", s.pendingCount(), full);
+        appendSegment(card, "--idle", s.idleCount(), full);
+        card.append("</div><div class=\"scale\"><span>0</span><span>")
+                .append(slots).append(" slots</span></div>");
     }
 
-    private static void appendSegment(StringBuilder card, String colorVar, int count, double peak) {
+    private static void appendSegment(StringBuilder card, String colorVar, int count, double full) {
         if (count == 0) {
             return;
         }
-        card.append("<i style=\"width:").append(percent(count / peak))
+        card.append("<i style=\"width:").append(percent(count / full))
                 .append("%;background:var(").append(colorVar).append(")\"></i>");
     }
 
-    private static double peakOf(List<QueueBucket> buckets, QueueSnapshot now) {
-        double peak = now.activeCount() + now.idleCount() + now.pendingCount();
-        for (QueueBucket bucket : buckets) {
-            peak = Math.max(peak, bucket.activeAverage() + bucket.idleAverage() + bucket.pendingAverage());
-        }
-        return Math.max(peak, 1.0);
-    }
-
     /**
-     * Active and pending stacked as filled areas over the last 24 hours, with completions per
-     * bucket drawn as a line on top. Buckets are right-aligned: the newest is at the right edge,
-     * and a history shorter than 24 hours leaves the left side empty.
+     * Queue length and throughput share one axis because both count jobs. That makes their
+     * heights comparable: a backlog standing above the throughput line by a factor of three is
+     * three ten-minute periods of work — the same quantity the header's "wait" reports.
      */
-    private static void appendCongestionChart(StringBuilder card, List<QueueBucket> buckets) {
-        card.append("<section><h2>congestion &mdash; 24h, 10 min per step</h2>");
+    private static void appendQueueAndThroughputChart(StringBuilder card, List<QueueBucket> buckets) {
+        card.append("<section><h2>waiting and done &mdash; 24h, 10 min per step</h2>");
         if (buckets.isEmpty()) {
             card.append("<p class=\"empty\">No history recorded yet.</p></section>");
             return;
         }
-        double loadPeak = 1.0;
-        long donePeak = 1;
+        double peak = 0;
         for (QueueBucket bucket : buckets) {
-            loadPeak = Math.max(loadPeak, bucket.activeAverage() + bucket.pendingAverage());
-            donePeak = Math.max(donePeak, bucket.completed());
+            peak = Math.max(peak, Math.max(bucket.pendingAverage(), bucket.completed()));
         }
+        double ceiling = niceCeiling(peak);
 
-        card.append("<svg viewBox=\"0 0 ").append(CHART_WIDTH).append(" ").append(CONGESTION_HEIGHT)
-                .append("\" preserveAspectRatio=\"none\" role=\"img\">");
+        card.append("<div class=\"unit\">jobs &mdash; area: waiting, line: done per 10 min</div>")
+                .append(axisOpen(ceiling, ""));
+        appendGridLines(card);
         int offset = StatusHistoryStore.BUCKETS_PER_DAY - buckets.size();
         for (int i = 0; i < buckets.size(); i++) {
-            QueueBucket bucket = buckets.get(i);
-            double activeHeight = CONGESTION_HEIGHT * bucket.activeAverage() / loadPeak;
-            double pendingHeight = CONGESTION_HEIGHT * bucket.pendingAverage() / loadPeak;
-            int x = (offset + i) * 5;
-            appendColumn(card, x, CONGESTION_HEIGHT - activeHeight, activeHeight, "--active");
-            appendColumn(card, x, CONGESTION_HEIGHT - activeHeight - pendingHeight, pendingHeight, "--pending");
+            double height = CONGESTION_HEIGHT * buckets.get(i).pendingAverage() / ceiling;
+            appendColumn(card, (offset + i) * 5, CONGESTION_HEIGHT - height, height, "--pending");
         }
-        appendCompletionLine(card, buckets, offset, donePeak);
-        card.append("</svg><div class=\"scale\"><span>24h ago</span><span>peak load ")
-                .append(Math.round(loadPeak)).append(" slots &middot; peak ").append(donePeak)
-                .append(" jobs/10min</span><span>now</span></div></section>");
+        appendLine(card, buckets, offset, ceiling, bucket -> (double) bucket.completed());
+        card.append(axisClose());
+        appendTimeScale(card);
+        card.append("</section>");
+    }
+
+    /**
+     * Busy slots as a percentage of the slots attached to the queue. A percentage has a ceiling
+     * that does not move, so a full panel means the same thing on a 1-slot queue and a 64-slot
+     * one, and the two can be compared without reading the numbers.
+     */
+    private static void appendUtilizationChart(StringBuilder card, List<QueueBucket> buckets, QueueSnapshot now) {
+        card.append("<section><h2>slot utilization &mdash; 24h, 10 min per step</h2>");
+        if (buckets.isEmpty()) {
+            card.append("<p class=\"empty\">No history recorded yet.</p></section>");
+            return;
+        }
+        card.append("<div class=\"unit\">% of ").append(now.activeCount() + now.idleCount()).append(" slots</div>")
+                .append(axisOpen(100, "%"));
+        appendGridLines(card);
+        int offset = StatusHistoryStore.BUCKETS_PER_DAY - buckets.size();
+        for (int i = 0; i < buckets.size(); i++) {
+            double height = CONGESTION_HEIGHT * buckets.get(i).utilizationPercent() / 100.0;
+            appendColumn(card, (offset + i) * 5, CONGESTION_HEIGHT - height, height, "--active");
+        }
+        card.append(axisClose());
+        appendTimeScale(card);
+        card.append("</section>");
+    }
+
+    /** The y-axis labels sit in HTML beside the SVG, so stretching the plot never distorts them. */
+    private static String axisOpen(double ceiling, String unit) {
+        return "<div class=\"chart\"><div class=\"yaxis\"><span>" + trim(ceiling) + unit
+                + "</span><span>" + trim(ceiling / 2) + unit + "</span><span>0" + unit + "</span></div>"
+                + "<div class=\"plot\" style=\"height:" + CONGESTION_HEIGHT + "px\">"
+                + "<svg viewBox=\"0 0 " + CHART_WIDTH + " " + CONGESTION_HEIGHT + "\" preserveAspectRatio=\"none\" role=\"img\">";
+    }
+
+    private static String axisClose() {
+        return "</svg></div></div>";
+    }
+
+    private static void appendGridLines(StringBuilder card) {
+        for (int fraction : new int[] {0, 1, 2}) {
+            double y = CONGESTION_HEIGHT * fraction / 2.0;
+            card.append("<line x1=\"0\" y1=\"").append(round(y)).append("\" x2=\"").append(CHART_WIDTH)
+                    .append("\" y2=\"").append(round(y))
+                    .append("\" stroke=\"var(--line)\" stroke-width=\"1\" vector-effect=\"non-scaling-stroke\"/>");
+        }
+    }
+
+    private static void appendTimeScale(StringBuilder card) {
+        card.append("<div class=\"scale\"><span>24h ago</span><span>12h ago</span><span>now</span></div>");
     }
 
     private static void appendColumn(StringBuilder card, int x, double y, double height, String colorVar) {
@@ -208,10 +253,11 @@ final class StatusPageRenderer {
                 .append("\" fill=\"var(").append(colorVar).append(")\"/>");
     }
 
-    private static void appendCompletionLine(StringBuilder card, List<QueueBucket> buckets, int offset, long donePeak) {
+    private static void appendLine(StringBuilder card, List<QueueBucket> buckets, int offset, double ceiling,
+                                    java.util.function.ToDoubleFunction<QueueBucket> value) {
         StringBuilder points = new StringBuilder();
         for (int i = 0; i < buckets.size(); i++) {
-            double y = CONGESTION_HEIGHT - (double) CONGESTION_HEIGHT * buckets.get(i).completed() / donePeak;
+            double y = CONGESTION_HEIGHT - CONGESTION_HEIGHT * value.applyAsDouble(buckets.get(i)) / ceiling;
             points.append((offset + i) * 5 + 2).append(",").append(round(y)).append(" ");
         }
         card.append("<polyline points=\"").append(points.toString().strip())
@@ -219,10 +265,28 @@ final class StatusPageRenderer {
                 .append(" stroke-linejoin=\"round\" vector-effect=\"non-scaling-stroke\"/>");
     }
 
+    /** The smallest of 1, 2, 5, 10, 20, 50, ... that is at least {@code value} — so the axis reads in round numbers. */
+    static double niceCeiling(double value) {
+        if (value <= 1) {
+            return 1;
+        }
+        double magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+        for (double step : new double[] {1, 2, 5}) {
+            if (step * magnitude >= value) {
+                return step * magnitude;
+            }
+        }
+        return 10 * magnitude;
+    }
+
+    private static String trim(double value) {
+        return value == Math.rint(value) ? String.valueOf((long) value) : String.valueOf(value);
+    }
+
     /** One row per address: 144 cells coloured by how many of that bucket's probes it answered. */
     private static void appendLivenessBands(StringBuilder card, QueueStatus status, StatusHistoryStore history,
                                             Map<String, BrokerConfig.EndpointCapability> capabilities) {
-        List<String> addresses = addressesOf(status, history);
+        List<String> addresses = QueueReport.addressesOf(status, history);
         card.append("<section><h2>liveness &mdash; 24h, probed every minute</h2>");
         if (addresses.isEmpty()) {
             card.append("<p class=\"empty\">No probe result recorded yet.</p></section>");
@@ -237,29 +301,6 @@ final class StatusPageRenderer {
             card.append("</span></div>");
         }
         card.append("</div></section>");
-    }
-
-    /**
-     * Every address this queue should show a row for: those the probe has observed, plus those
-     * currently registered in {@code JobQueue}. The second source matters in the first minute
-     * after startup, before any probe has run — without it the card would list no address at all,
-     * which is a step back from the page this one replaces ({@code QueueSnapshotStatus_260810_oo01}).
-     */
-    private static List<String> addressesOf(QueueStatus status, StatusHistoryStore history) {
-        SortedSet<String> addresses = new TreeSet<>(history.addressesOf(status.queueName()));
-        for (String workerId : status.snapshot().activeEndpointIds()) {
-            addresses.add(physicalAddress(workerId));
-        }
-        for (String workerId : status.snapshot().idleEndpointIds()) {
-            addresses.add(physicalAddress(workerId));
-        }
-        return List.copyOf(addresses);
-    }
-
-    /** A worker's actor name is {@code address#slot}; several workers share one address. */
-    private static String physicalAddress(String workerId) {
-        int slot = workerId.lastIndexOf('#');
-        return slot < 0 ? workerId : workerId.substring(0, slot);
     }
 
     private static void appendBand(StringBuilder card, List<EndpointBucket> buckets) {

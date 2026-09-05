@@ -32,6 +32,15 @@ public record EndpointBucket(String address, String queueName, Instant bucketSta
         return new EndpointBucket(address, queueName, bucketStart, probeOk + (responded ? 1 : 0), probeTotal + 1);
     }
 
+    /** Two records of the same ten-minute window, added together — see {@code QueueBucket.mergedWith}. */
+    public EndpointBucket mergedWith(EndpointBucket other) {
+        if (!bucketStart.equals(other.bucketStart()) || !address.equals(other.address())) {
+            throw new IllegalArgumentException("only the same address's same bucket can be merged");
+        }
+        return new EndpointBucket(address, queueName, bucketStart,
+                probeOk + other.probeOk(), probeTotal + other.probeTotal());
+    }
+
     public Health health() {
         if (probeTotal == 0 || probeOk == 0) {
             return Health.DOWN;

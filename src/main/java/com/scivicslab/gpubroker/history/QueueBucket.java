@@ -32,6 +32,31 @@ public record QueueBucket(String queueName, Instant bucketStart, int sampleCount
                 completed + completedDelta, failed + failedDelta);
     }
 
+    /**
+     * Two records of the same ten-minute window, added together. Restarting inside a window
+     * leaves one row written by the stopping instance and one by the starting instance; without
+     * this they would be restored as two buckets at the same instant and drawn as two columns.
+     */
+    public QueueBucket mergedWith(QueueBucket other) {
+        if (!bucketStart.equals(other.bucketStart()) || !queueName.equals(other.queueName())) {
+            throw new IllegalArgumentException("only the same queue's same bucket can be merged");
+        }
+        return new QueueBucket(queueName, bucketStart, sampleCount + other.sampleCount(),
+                activeSum + other.activeSum(), idleSum + other.idleSum(), pendingSum + other.pendingSum(),
+                completed + other.completed(), failed + other.failed());
+    }
+
+    /** Slots attached to the queue during this bucket: busy ones plus free ones. */
+    public double totalSlotsAverage() {
+        return activeAverage() + idleAverage();
+    }
+
+    /** Busy slots as a percentage of attached slots — 0 when the queue had no slot at all. */
+    public double utilizationPercent() {
+        double total = totalSlotsAverage();
+        return total == 0.0 ? 0.0 : 100.0 * activeAverage() / total;
+    }
+
     public double activeAverage() {
         return sampleCount == 0 ? 0.0 : (double) activeSum / sampleCount;
     }
