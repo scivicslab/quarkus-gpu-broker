@@ -80,6 +80,7 @@ final class StatusPageRenderer {
                 + ".metrics{display:flex;gap:1.1rem;margin-left:auto;font-variant-numeric:tabular-nums;"
                 + "font-size:0.85rem;color:var(--muted)}"
                 + ".metrics b{font-weight:600;color:var(--ink)}"
+                + ".metrics small{font-size:0.85em;opacity:0.8}"
                 + ".swatch{display:inline-block;width:0.6em;height:0.6em;border-radius:2px;margin-right:0.35em}"
                 + ".now{display:flex;height:0.65rem;margin:0.7rem 0 0.2rem;background:var(--bg);"
                 + "border-radius:3px;overflow:hidden}"
@@ -107,11 +108,11 @@ final class StatusPageRenderer {
         StringBuilder card = new StringBuilder();
         card.append("<div class=\"card\"><div class=\"head\"><span class=\"name\">")
                 .append(escape(status.queueName())).append("</span><span class=\"metrics\">")
-                .append(metric("active", "--active", s.activeCount()))
-                .append(metric("pending", "--pending", s.pendingCount()))
-                .append(metric("idle", "--idle", s.idleCount()))
+                .append(metric("active", "--active", s.activeCount(), "slots"))
+                .append(metric("pending", "--pending", s.pendingCount(), "jobs"))
+                .append(metric("idle", "--idle", s.idleCount(), "slots"))
                 .append("<span>wait <b>").append(estimatedWait(s.pendingCount(), completedLastHour)).append("</b></span>")
-                .append("<span>done/h <b>").append(completedLastHour).append("</b></span>")
+                .append("<span>done <b>").append(completedLastHour).append("</b> <small>jobs/h</small></span>")
                 .append("</span></div>");
 
         appendCurrentBar(card, s, peakOf(buckets, s));
@@ -122,9 +123,15 @@ final class StatusPageRenderer {
         return card.toString();
     }
 
-    private static String metric(String label, String colorVar, int count) {
+    /**
+     * One labelled number with its unit spelled out. {@code active} and {@code idle} count
+     * {@code AiServiceEndpointWorker}s (slots), {@code pending} counts jobs still in {@code
+     * JobQueue}'s deque — without the unit on the page, a reader has to already know which of
+     * the three is which.
+     */
+    private static String metric(String label, String colorVar, int count, String unit) {
         return "<span><i class=\"swatch\" style=\"background:var(" + colorVar + ")\"></i>"
-                + label + " <b>" + count + "</b></span>";
+                + label + " <b>" + count + "</b> <small>" + unit + "</small></span>";
     }
 
     /**
@@ -137,8 +144,8 @@ final class StatusPageRenderer {
         appendSegment(card, "--active", s.activeCount(), peak);
         appendSegment(card, "--pending", s.pendingCount(), peak);
         appendSegment(card, "--idle", s.idleCount(), peak);
-        card.append("</div><div class=\"scale\"><span>0</span><span>peak 24h: ")
-                .append(Math.round(peak)).append("</span></div>");
+        card.append("</div><div class=\"scale\"><span>0</span><span>peak 24h ")
+                .append(Math.round(peak)).append(" slots</span></div>");
     }
 
     private static void appendSegment(StringBuilder card, String colorVar, int count, double peak) {
@@ -188,8 +195,8 @@ final class StatusPageRenderer {
         }
         appendCompletionLine(card, buckets, offset, donePeak);
         card.append("</svg><div class=\"scale\"><span>24h ago</span><span>peak load ")
-                .append(Math.round(loadPeak)).append(" &middot; peak done/10min ").append(donePeak)
-                .append("</span><span>now</span></div></section>");
+                .append(Math.round(loadPeak)).append(" slots &middot; peak ").append(donePeak)
+                .append(" jobs/10min</span><span>now</span></div></section>");
     }
 
     private static void appendColumn(StringBuilder card, int x, double y, double height, String colorVar) {

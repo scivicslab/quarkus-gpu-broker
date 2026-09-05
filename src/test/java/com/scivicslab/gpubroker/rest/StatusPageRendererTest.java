@@ -40,6 +40,23 @@ class StatusPageRendererTest {
         assertTrue(html.contains("pending <b>3</b>"));
     }
 
+    /**
+     * active and idle count workers, pending counts jobs. The page spells the unit out next to
+     * each number so a reader does not have to already know which of the three is which.
+     */
+    @Test
+    void eachCountCarriesItsUnit() {
+        QueueStatus status = new QueueStatus("vllm-gemma4", new QueueSnapshot(
+                List.of("192.168.5.16:8000#0"), List.of("192.168.5.16:8000#1"), 7, 0, 0));
+
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+
+        assertTrue(html.contains("active <b>1</b> <small>slots</small>"));
+        assertTrue(html.contains("pending <b>7</b> <small>jobs</small>"));
+        assertTrue(html.contains("idle <b>1</b> <small>slots</small>"));
+        assertTrue(html.contains("<small>jobs/h</small>"));
+    }
+
     @Test
     void oneQueue_listsTheActualEndpointAddresses() {
         QueueStatus status = new QueueStatus("vllm-gemma4",
