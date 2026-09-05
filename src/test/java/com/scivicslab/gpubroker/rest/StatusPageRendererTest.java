@@ -1,5 +1,6 @@
 package com.scivicslab.gpubroker.rest;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.scivicslab.gpubroker.config.BrokerConfig;
+import com.scivicslab.gpubroker.history.StatusHistoryStore;
 import com.scivicslab.gpubroker.model.QueueSnapshot;
 import com.scivicslab.gpubroker.model.QueueStatus;
 
@@ -20,7 +22,7 @@ class StatusPageRendererTest {
 
     @Test
     void noQueues_rendersAPlaceholderMessage() {
-        String html = StatusPageRenderer.render(List.of(), Map.of());
+        String html = StatusPageRenderer.render(List.of(), Map.of(), emptyHistory());
 
         assertTrue(html.contains("No queues discovered yet."));
     }
@@ -28,32 +30,59 @@ class StatusPageRendererTest {
     @Test
     void oneQueue_rendersItsNameAndCounts() {
         QueueStatus status = new QueueStatus("vllm-gemma4",
-                new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000", "192.168.5.14:8000"), 3));
+                new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000", "192.168.5.14:8000"), 3, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
 
         assertTrue(html.contains("vllm-gemma4"));
-        assertTrue(html.contains("active: 1"));
-        assertTrue(html.contains("idle: 2"));
-        assertTrue(html.contains("pending: 3"));
+        assertTrue(html.contains("active <b>1</b>"));
+        assertTrue(html.contains("idle <b>2</b>"));
+        assertTrue(html.contains("pending <b>3</b>"));
     }
 
     @Test
     void oneQueue_listsTheActualEndpointAddresses() {
         QueueStatus status = new QueueStatus("vllm-gemma4",
-                new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000"), 0));
+                new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000"), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
 
-        assertTrue(html.contains("192.168.5.16:8000 (active)"));
-        assertTrue(html.contains("192.168.5.17:8000 (idle)"));
+        assertTrue(html.contains("192.168.5.16:8000"));
+        assertTrue(html.contains("192.168.5.17:8000"));
+    }
+
+    /**
+     * One row per physical address, not per worker: a single address runs maxConcurrency workers
+     * (192.168.5.16:8000#0, #1, ...) which would otherwise be one liveness row each.
+     */
+    @Test
+    void severalWorkersOfOneAddress_collapseToOneRow() {
+        QueueStatus status = new QueueStatus("vllm-gemma4", new QueueSnapshot(
+                List.of("192.168.5.16:8000#0"), List.of("192.168.5.16:8000#1", "192.168.5.16:8000#2"), 0, 0, 0));
+
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+
+        assertEquals(1, countOccurrences(html, "<span class=\"addr\">192.168.5.16:8000"));
+        assertFalse(html.contains("192.168.5.16:8000#0"));
+    }
+
+    /** Before the first probe lands there is no history, and the addresses must still be listed. */
+    @Test
+    void withoutAnyHistory_stillListsRegisteredAddresses() {
+        QueueStatus status = new QueueStatus("vllm-gemma4",
+                new QueueSnapshot(List.of(), List.of("192.168.5.17:8000#0"), 0, 0, 0));
+
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+
+        assertTrue(html.contains("192.168.5.17:8000"));
+        assertFalse(html.contains("No probe result recorded yet."));
     }
 
     @Test
     void allEmpty_rendersNoBarSegmentsAndNoEndpointList() {
-        QueueStatus status = new QueueStatus("idle-queue", new QueueSnapshot(List.of(), List.of(), 0));
+        QueueStatus status = new QueueStatus("idle-queue", new QueueSnapshot(List.of(), List.of(), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
 
         assertFalse(html.contains("class=\"active\""));
         assertFalse(html.contains("class=\"idle\""));
@@ -63,9 +92,9 @@ class StatusPageRendererTest {
 
     @Test
     void queueNameAndEndpointIdAreHtmlEscaped() {
-        QueueStatus status = new QueueStatus("a<b>&c", new QueueSnapshot(List.of("x<y"), List.of(), 0));
+        QueueStatus status = new QueueStatus("a<b>&c", new QueueSnapshot(List.of("x<y"), List.of(), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
 
         assertTrue(html.contains("a&lt;b&gt;&amp;c"));
         assertFalse(html.contains("a<b>&c"));
@@ -75,7 +104,7 @@ class StatusPageRendererTest {
 
     @Test
     void refreshesEveryTenSeconds() {
-        String html = StatusPageRenderer.render(List.of(), Map.of());
+        String html = StatusPageRenderer.render(List.of(), Map.of(), emptyHistory());
 
         assertTrue(html.contains("<meta http-equiv=\"refresh\" content=\"10\">"));
     }
@@ -84,13 +113,13 @@ class StatusPageRendererTest {
     void endpointWithDeclaredCapability_showsItLabeledAsDeclared() {
         // endpointId is a Worker name ("host:port#slot"); the capability map is keyed by the bare address.
         QueueStatus status = new QueueStatus("vllm-gemma4",
-                new QueueSnapshot(List.of("192.168.5.14:8000#0"), List.of(), 0));
+                new QueueSnapshot(List.of("192.168.5.14:8000#0"), List.of(), 0, 0, 0));
         Map<String, BrokerConfig.EndpointCapability> capabilities =
                 Map.of("192.168.5.14:8000", new StubEndpointCapability(32768, true, null));
 
-        String html = StatusPageRenderer.render(List.of(status), capabilities);
+        String html = StatusPageRenderer.render(List.of(status), capabilities, emptyHistory());
 
-        assertTrue(html.contains("192.168.5.14:8000#0 (active)"));
+        assertTrue(html.contains("192.168.5.14:8000"));
         assertTrue(html.contains("context 32768"));
         assertTrue(html.contains("thinking true"));
         assertTrue(html.contains("(declared)"));
@@ -99,11 +128,23 @@ class StatusPageRendererTest {
     @Test
     void endpointWithoutDeclaredCapability_showsNoDeclaredLabel() {
         QueueStatus status = new QueueStatus("yomitoku-ocr",
-                new QueueSnapshot(List.of("192.168.5.16:8013#0"), List.of(), 0));
+                new QueueSnapshot(List.of("192.168.5.16:8013#0"), List.of(), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
 
         assertFalse(html.contains("(declared)"));
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+            count++;
+        }
+        return count;
+    }
+
+    private static StatusHistoryStore emptyHistory() {
+        return new StatusHistoryStore(null);
     }
 
     private record StubEndpointCapability(Integer declaredMaxContextLength, Boolean declaredThinkingModeSupported,

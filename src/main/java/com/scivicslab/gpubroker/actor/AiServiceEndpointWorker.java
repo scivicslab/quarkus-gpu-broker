@@ -61,12 +61,20 @@ public final class AiServiceEndpointWorker {
 
     /** Process one job to completion, then pull the next (completion-driven). */
     public void assign(Job job) {
+        boolean succeeded = true;
         try {
             client.send(address, requestPath, job);   // this actor's own virtual thread waits for completion
         } catch (AiServiceCallException e) {
+            succeeded = false;
             requeue(job);
         }
+        boolean completed = succeeded;
         queue().tell(q -> {
+            // Counted only on success: a failed call was handed to another endpoint by
+            // requeue and has not finished yet — see StatusHistory_260905_oo01.
+            if (completed) {
+                q.recordCompleted();
+            }
             Job next = q.requestWork(self.getName());
             if (next != null) {
                 self.tell(w -> w.assign(next));
@@ -83,6 +91,7 @@ public final class AiServiceEndpointWorker {
         if (job.attempt() + 1 >= MAX_ATTEMPTS) {
             job.responseSink().fail(new AiServiceCallException(
                     "gave up after " + MAX_ATTEMPTS + " attempts, address=" + address));
+            queue().tell(JobQueue::recordFailed);
             return;
         }
         Job next = job.nextAttempt();

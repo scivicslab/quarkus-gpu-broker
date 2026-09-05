@@ -100,7 +100,12 @@ public class JobQueueRegistry {
         }
     }
 
-    private List<String> expandNodeIps() {
+    /**
+     * Every node IP to probe, with each configured CIDR block expanded to its addresses.
+     * Public because {@code StatusHistoryRecorder} probes the same set once a minute and must
+     * not re-derive it — {@code CidrRange} stays package-private, with this as its one exit.
+     */
+    public List<String> expandNodeIps() {
         List<String> expanded = new ArrayList<>();
         for (String entry : brokerConfig.nodes().orElse(List.of())) {
             expanded.addAll(CidrRange.expand(entry));

@@ -176,3 +176,23 @@ GPU ノード群（standalone vLLM）の前に立つ OpenAI 互換リバース�
 - [x] `HttpAiServiceClient`の`HttpClient`を`HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()`でHTTP/1.1固定に修正。`mvn install`（38件GREEN）後、実ネットワークでYomiToku（実PNG画像）・Marker（実PDF）・vLLM（回帰確認）の3つとも`gpu-broker`経由で正常完了することを確認
 - [x] 設計文書（`018_concurrency_control`）に原因・修正・検証結果を追記
 - [x] jar再デプロイ済み。検証後、テスト用brokerプロセスは全て停止済み
+
+## ステータスページの履歴表示（2026-09-05）
+
+仕様: `StatusHistory_260905_oo01`（`doc_SCIVICS003/docs/quarkus-gpu-broker/030_development/110_observability/`）
+
+- [x] `JobQueue` に完了・失敗の累積カウンタを追加し `QueueSnapshot` に載せる
+- [x] `AiServiceEndpointWorker` の完了地点で `recordCompleted`／再試行上限で `recordFailed`
+- [x] `StatusHistoryStore`（10分バケット・24時間保持・JSON Lines 永続化）
+- [x] `StatusHistoryRecorder`（`@Scheduled(every="1m")` で `EndpointProbe.survey` を実行し死活を観測）
+- [x] `StatusPageRenderer` をカード3段（現在値・混み具合24h・死活24h）へ組み直し、インラインSVGで描画
+- [x] `mvn test` 73件 GREEN（うち `S_history` 13件は新規）
+- [x] `rm -rf target && mvn install` BUILD SUCCESS
+- [ ] 実機起動での確認（起動・画面描画・履歴ファイル生成）— 使い捨てインスタンスの起動許可待ち
+- [ ] `~/works/quarkus-gpu-broker.jar` の差し替えと 28005 の再起動（ユーザー側）
+
+### 積み残し（別途判断）
+
+プローブが応答するのに `JobQueue` に登録されていないアドレスの再登録（停止から復帰したノードの再投入）は実装していない。
+ジョブの振り分け先を変える変更であり、画面の変更とは別に決める。現状は起動時に発見できなかったノードは
+再起動まで復帰しない。

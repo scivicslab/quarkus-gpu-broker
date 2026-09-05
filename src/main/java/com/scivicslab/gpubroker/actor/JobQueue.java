@@ -58,6 +58,8 @@ public final class JobQueue {
     private final Set<String> activeEndpointIds = new HashSet<>();
     private final Map<String, Instant> reservedUntil = new HashMap<>();
     private final Duration reservation;
+    private long completedTotal;
+    private long failedTotal;
     private ActorSystem system;
     private ActorRef<JobQueue> self;
 
@@ -182,12 +184,27 @@ public final class JobQueue {
         return activeEndpointIds.size() == idleEndpointIds.size();
     }
 
+    /**
+     * One job finished successfully on some {@code AiServiceEndpointWorker} of this queue.
+     * Counted here rather than in the worker because the worker already sends this queue a
+     * message the moment it finishes ({@code requestWork}), so no new path is needed — and
+     * the count belongs with the rest of this queue's state.
+     */
+    public void recordCompleted() {
+        completedTotal++;
+    }
+
+    /** One job was given up on after exhausting its attempts — see {@code AiServiceEndpointWorker.requeue}. */
+    public void recordFailed() {
+        failedTotal++;
+    }
+
     /** Current state for the status page — read-only, does not mutate anything. */
     public QueueSnapshot snapshot() {
         Set<String> idle = new LinkedHashSet<>(idleEndpointIds);
         Set<String> active = new LinkedHashSet<>(activeEndpointIds);
         active.removeAll(idle);
-        return new QueueSnapshot(List.copyOf(active), List.copyOf(idle), deque.size());
+        return new QueueSnapshot(List.copyOf(active), List.copyOf(idle), deque.size(), completedTotal, failedTotal);
     }
 
     private String pollIdleEndpoint(Priority priority) {
