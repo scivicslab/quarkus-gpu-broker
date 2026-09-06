@@ -1,8 +1,8 @@
 package com.scivicslab.gpubroker.e2e;
 
+import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import io.restassured.RestAssured;
 
@@ -33,21 +33,39 @@ abstract class GpuBrokerE2EBase {
         }
     }
 
-    private static final Pattern ROW_COUNTS = Pattern.compile(
-            "</strong> — active: (\\d+), idle: \\d+, pending: (\\d+)");
-
-    /** Reads the {@code active: N} count for {@code queueName} off the status page ({@code GET /}). */
+    /** Reads how many jobs {@code queueName} is running, from {@code GET /queues}. */
     protected int readActiveCount(String queueName) {
-        return readRowCounts(queueName)[0];
+        return readCounts(queueName)[0];
     }
 
-    /** Reads the {@code pending: N} count for {@code queueName} off the status page ({@code GET /}). */
+    /** Reads how many jobs are waiting on {@code queueName}, from {@code GET /queues}. */
     protected int readPendingCount(String queueName) {
-        return readRowCounts(queueName)[1];
+        return readCounts(queueName)[1];
     }
 
-    private int[] readRowCounts(String queueName) {
-        Matcher m = Pattern.compile(Pattern.quote(queueName) + ROW_COUNTS.pattern()).matcher(fetchStatus());
-        return m.find() ? new int[] {Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))} : new int[] {0, 0};
+    /**
+     * Reads {@code activeSlots} and {@code pendingJobs} for one queue.
+     *
+     * <p>These used to be scraped out of the status page HTML with a regular expression that
+     * matched the markup of the day. The page was rebuilt on 2026-09-05 and the expression
+     * stopped matching, but it returned zeros rather than failing, so every caller silently
+     * read "nothing is running" from then on. {@code GET /queues} answers the same numbers as
+     * JSON and does not move when the page is restyled. A queue that is absent is an error
+     * here, not another zero.
+     */
+    private int[] readCounts(String queueName) {
+        List<Map<String, Object>> queues = RestAssured.given().baseUri(BASE_URL)
+                .when().get("/queues")
+                .then().statusCode(200)
+                .extract().jsonPath().getList("");
+        for (Map<String, Object> queue : queues) {
+            if (queueName.equals(queue.get("name"))) {
+                return new int[] {
+                    ((Number) queue.get("activeSlots")).intValue(),
+                    ((Number) queue.get("pendingJobs")).intValue()
+                };
+            }
+        }
+        throw new AssertionError("GET /queues does not list a queue named " + queueName);
     }
 }
