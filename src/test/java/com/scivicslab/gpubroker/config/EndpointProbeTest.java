@@ -89,7 +89,9 @@ class EndpointProbeTest {
     @Test
     void eachKind_hasItsOwnRequestPath() {
         assertEquals("/v1/chat/completions", vllmChat.requestPath());
-        assertEquals("/ocr", yomiTokuOcr.requestPath());
+        // /ocr returns only the analyzer's paragraphs and drops the tables it read; /ocr/markdown
+        // exports the same analysis with them (YomiTokuMarkdownEndpoint_260907_oo01).
+        assertEquals("/ocr/markdown", yomiTokuOcr.requestPath());
         assertEquals("/marker/upload", markerOcr.requestPath());
         assertEquals("/v1/embeddings", embedding.requestPath());
         assertEquals("/transcript", whisperTranscript.requestPath());
