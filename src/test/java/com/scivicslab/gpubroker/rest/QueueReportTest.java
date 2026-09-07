@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import com.scivicslab.gpubroker.history.ProbeObservation;
 import com.scivicslab.gpubroker.history.StatusHistoryStore;
+import com.scivicslab.gpubroker.history.StatusHistoryStore.QueueHistorySnapshot;
 import com.scivicslab.gpubroker.model.QueueSnapshot;
 import com.scivicslab.gpubroker.model.QueueStatus;
 
@@ -25,10 +26,15 @@ class QueueReportTest {
         return new QueueStatus(queueName, new QueueSnapshot(active, idle, pending, 0, 0));
     }
 
+    /** What {@code StatusResource} does for real: one {@code snapshotFor} call per queue. */
+    private static QueueHistorySnapshot snapshotOf(QueueStatus status, StatusHistoryStore history) {
+        return history.snapshotFor(status.queueName(), QueueReport.registeredAddressesOf(status));
+    }
+
     @Test
     void countsSlotsAndJobsSeparately() {
-        QueueReport report = QueueReport.of(
-                status("q", List.of("a:1#0"), List.of("a:1#1", "a:1#2"), 5), new StatusHistoryStore(null));
+        QueueStatus status = status("q", List.of("a:1#0"), List.of("a:1#1", "a:1#2"), 5);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, new StatusHistoryStore(null)));
 
         assertEquals("q", report.name());
         assertEquals(1, report.activeSlots());
@@ -40,8 +46,8 @@ class QueueReportTest {
     /** Several workers share one address, and the report names addresses, not workers. */
     @Test
     void oneEntryPerAddress() {
-        QueueReport report = QueueReport.of(
-                status("q", List.of("a:1#0"), List.of("a:1#1", "b:2#0"), 0), new StatusHistoryStore(null));
+        QueueStatus status = status("q", List.of("a:1#0"), List.of("a:1#1", "b:2#0"), 0);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, new StatusHistoryStore(null)));
 
         assertEquals(List.of("a:1", "b:2"), report.endpoints().stream().map(EndpointReport::address).toList());
     }
@@ -49,8 +55,8 @@ class QueueReportTest {
     /** Before the first probe, the slot count alone decides — otherwise every queue reads unusable at startup. */
     @Test
     void withoutAnyProbe_isReadyWhenItHasSlots() {
-        QueueReport report = QueueReport.of(
-                status("q", List.of(), List.of("a:1#0"), 0), new StatusHistoryStore(null));
+        QueueStatus status = status("q", List.of(), List.of("a:1#0"), 0);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, new StatusHistoryStore(null)));
 
         assertTrue(report.ready());
         assertEquals("UNKNOWN", report.endpoints().get(0).health());
@@ -58,7 +64,8 @@ class QueueReportTest {
 
     @Test
     void withoutAnySlot_isNotReady() {
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of(), 0), new StatusHistoryStore(null));
+        QueueStatus status = status("q", List.of(), List.of(), 0);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, new StatusHistoryStore(null)));
 
         assertFalse(report.ready());
         assertEquals(0, report.totalSlots());
@@ -73,8 +80,9 @@ class QueueReportTest {
     void addressRegisteredButNotAnswering_isNotReady() {
         StatusHistoryStore history = new StatusHistoryStore(null);
         history.record(NOON, List.of(new ProbeObservation("a:1", "q", false)), List.of());
+        QueueStatus status = status("q", List.of(), List.of("a:1#0"), 0);
 
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, history));
 
         assertFalse(report.ready());
         assertEquals("DOWN", report.endpoints().get(0).health());
@@ -85,8 +93,9 @@ class QueueReportTest {
         StatusHistoryStore history = new StatusHistoryStore(null);
         history.record(NOON, List.of(new ProbeObservation("a:1", "q", true),
                 new ProbeObservation("b:2", "q", false)), List.of());
+        QueueStatus status = status("q", List.of(), List.of("a:1#0", "b:2#0"), 0);
 
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0", "b:2#0"), 0), history);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, history));
 
         assertTrue(report.ready());
     }
@@ -98,8 +107,9 @@ class QueueReportTest {
         history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
         history.record(NOON.plus(Duration.ofMinutes(1)),
                 List.of(new ProbeObservation("a:1", "q", false)), List.of());
+        QueueStatus status = status("q", List.of(), List.of("a:1#0"), 0);
 
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, history));
 
         assertEquals("PARTIAL", report.endpoints().get(0).health());
         assertEquals(1, report.endpoints().get(0).probeOk());
@@ -114,8 +124,9 @@ class QueueReportTest {
         history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
         history.record(NOON.plus(Duration.ofMinutes(10)),
                 List.of(new ProbeObservation("a:1", "q", false)), List.of());
+        QueueStatus status = status("q", List.of(), List.of("a:1#0"), 0);
 
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history, NOON);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, history), NOON);
 
         assertEquals(2, report.endpoints().size());
         assertEquals("UP", report.endpoints().get(0).health());
@@ -129,8 +140,9 @@ class QueueReportTest {
         history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
         history.record(NOON.plus(Duration.ofMinutes(10)),
                 List.of(new ProbeObservation("a:1", "q", false)), List.of());
+        QueueStatus status = status("q", List.of(), List.of("a:1#0"), 0);
 
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history,
+        QueueReport report = QueueReport.of(status, snapshotOf(status, history),
                 NOON.plus(Duration.ofMinutes(10)));
 
         assertEquals(1, report.endpoints().size());
@@ -142,8 +154,9 @@ class QueueReportTest {
     void since_afterEveryObservation_reportsUnprobed() {
         StatusHistoryStore history = new StatusHistoryStore(null);
         history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
+        QueueStatus status = status("q", List.of(), List.of("a:1#0"), 0);
 
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history,
+        QueueReport report = QueueReport.of(status, snapshotOf(status, history),
                 NOON.plus(Duration.ofHours(1)));
 
         assertEquals("UNKNOWN", report.endpoints().get(0).health());
@@ -154,8 +167,9 @@ class QueueReportTest {
     void endpointReport_carriesTheWindowItCameFrom() {
         StatusHistoryStore history = new StatusHistoryStore(null);
         history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
+        QueueStatus status = status("q", List.of(), List.of("a:1#0"), 0);
 
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, history));
 
         assertEquals(NOON.toString(), report.endpoints().get(0).bucketStart());
     }
@@ -166,8 +180,9 @@ class QueueReportTest {
         history.record(NOON, List.of(), List.of(status("q", List.of(), List.of("a:1#0"), 0)));
         history.record(NOON.plus(Duration.ofMinutes(1)), List.of(),
                 List.of(new QueueStatus("q", new QueueSnapshot(List.of(), List.of("a:1#0"), 0, 7, 0))));
+        QueueStatus status = status("q", List.of(), List.of("a:1#0"), 0);
 
-        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history);
+        QueueReport report = QueueReport.of(status, snapshotOf(status, history));
 
         assertEquals(7, report.completedLastHour());
     }

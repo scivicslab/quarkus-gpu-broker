@@ -46,7 +46,7 @@ public class AsyncJobResource {
     ActorSystem system;
 
     @Inject
-    JobResultStore results;
+    ActorRef<JobResultStore> results;
 
     @Inject
     SubmissionAdmissionControl admission;
@@ -70,7 +70,7 @@ public class AsyncJobResource {
             return Response.status(429).build();
         }
 
-        String jobId = results.register();
+        String jobId = results.ask(JobResultStore::register).join();
         Priority priority = Priority.fromHeader(priorityHeader);
         PolledResponseSink sink = new PolledResponseSink(jobId, results);
         Job job = Job.first(new RequestBody(rawBody, contentType), priority,
@@ -85,8 +85,9 @@ public class AsyncJobResource {
 
     @GET
     @Path("/{jobId}")
+    @Blocking
     public Response fetch(@PathParam("jobId") String jobId) {
-        return results.get(jobId)
+        return results.ask(r -> r.get(jobId)).join()
                 .map(r -> Response.ok(r).build())
                 .orElse(Response.status(404).build());
     }

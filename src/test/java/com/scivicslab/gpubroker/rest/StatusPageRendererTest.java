@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.history.StatusHistoryStore;
+import com.scivicslab.gpubroker.history.StatusHistoryStore.QueueHistorySnapshot;
 import com.scivicslab.gpubroker.model.QueueSnapshot;
 import com.scivicslab.gpubroker.model.QueueStatus;
 
@@ -23,7 +25,7 @@ class StatusPageRendererTest {
 
     @Test
     void noQueues_rendersAPlaceholderMessage() {
-        String html = StatusPageRenderer.render(List.of(), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(), Map.of(), Map.of());
 
         assertTrue(html.contains("No queues discovered yet."));
     }
@@ -33,7 +35,7 @@ class StatusPageRendererTest {
         QueueStatus status = new QueueStatus("vllm-gemma4",
                 new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000", "192.168.5.14:8000"), 3, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertTrue(html.contains("vllm-gemma4"));
         assertTrue(html.contains("active <b>1</b>"));
@@ -50,7 +52,7 @@ class StatusPageRendererTest {
         QueueStatus status = new QueueStatus("vllm-gemma4", new QueueSnapshot(
                 List.of("192.168.5.16:8000#0"), List.of("192.168.5.16:8000#1"), 7, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertTrue(html.contains("active <b>1</b> <small>slots</small>"));
         assertTrue(html.contains("pending <b>7</b> <small>jobs</small>"));
@@ -63,7 +65,7 @@ class StatusPageRendererTest {
         QueueStatus status = new QueueStatus("vllm-gemma4",
                 new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000"), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertTrue(html.contains("192.168.5.16:8000"));
         assertTrue(html.contains("192.168.5.17:8000"));
@@ -78,7 +80,7 @@ class StatusPageRendererTest {
         QueueStatus status = new QueueStatus("vllm-gemma4", new QueueSnapshot(
                 List.of("192.168.5.16:8000#0"), List.of("192.168.5.16:8000#1", "192.168.5.16:8000#2"), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertEquals(1, countOccurrences(html, "<span class=\"addr\">192.168.5.16:8000"));
         assertFalse(html.contains("192.168.5.16:8000#0"));
@@ -90,7 +92,7 @@ class StatusPageRendererTest {
         QueueStatus status = new QueueStatus("vllm-gemma4",
                 new QueueSnapshot(List.of(), List.of("192.168.5.17:8000#0"), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertTrue(html.contains("192.168.5.17:8000"));
         assertFalse(html.contains("No probe result recorded yet."));
@@ -100,7 +102,7 @@ class StatusPageRendererTest {
     void allEmpty_rendersNoBarSegmentsAndNoEndpointList() {
         QueueStatus status = new QueueStatus("idle-queue", new QueueSnapshot(List.of(), List.of(), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertFalse(html.contains("class=\"active\""));
         assertFalse(html.contains("class=\"idle\""));
@@ -112,7 +114,7 @@ class StatusPageRendererTest {
     void queueNameAndEndpointIdAreHtmlEscaped() {
         QueueStatus status = new QueueStatus("a<b>&c", new QueueSnapshot(List.of("x<y"), List.of(), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertTrue(html.contains("a&lt;b&gt;&amp;c"));
         assertFalse(html.contains("a<b>&c"));
@@ -122,7 +124,7 @@ class StatusPageRendererTest {
 
     @Test
     void refreshesEveryTenSeconds() {
-        String html = StatusPageRenderer.render(List.of(), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(), Map.of(), Map.of());
 
         assertTrue(html.contains("<meta http-equiv=\"refresh\" content=\"10\">"));
     }
@@ -135,7 +137,7 @@ class StatusPageRendererTest {
         Map<String, BrokerConfig.EndpointCapability> capabilities =
                 Map.of("192.168.5.14:8000", new StubEndpointCapability(32768, true, null));
 
-        String html = StatusPageRenderer.render(List.of(status), capabilities, emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), capabilities, historyFor(status));
 
         assertTrue(html.contains("192.168.5.14:8000"));
         assertTrue(html.contains("context 32768"));
@@ -148,7 +150,7 @@ class StatusPageRendererTest {
         QueueStatus status = new QueueStatus("yomitoku-ocr",
                 new QueueSnapshot(List.of("192.168.5.16:8013#0"), List.of(), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertFalse(html.contains("(declared)"));
     }
@@ -160,7 +162,7 @@ class StatusPageRendererTest {
         QueueStatus status = new QueueStatus("q", new QueueSnapshot(
                 List.of("a:1#0", "a:1#1"), List.of("a:1#2", "a:1#3"), 0, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(status), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
         assertTrue(html.contains("4 slots"), "the bar's ceiling is named as the slot count");
     }
@@ -186,7 +188,7 @@ class StatusPageRendererTest {
                 new QueueSnapshot(List.of("a:1#0"), List.of("a:1#1"), 6, 0, 0))));
         QueueStatus now = new QueueStatus("q", new QueueSnapshot(List.of("a:1#0"), List.of("a:1#1"), 6, 0, 0));
 
-        String html = StatusPageRenderer.render(List.of(now), Map.of(), history);
+        String html = StatusPageRenderer.render(List.of(now), Map.of(), historyFor(history, now));
 
         assertTrue(html.contains("waiting and done"));
         assertTrue(html.contains("jobs &mdash; area: waiting, line: done per 10 min"));
@@ -199,7 +201,7 @@ class StatusPageRendererTest {
     /** The header has to say what changes when, since three different intervals are in play. */
     @Test
     void headerNamesEachUpdateInterval() {
-        String html = StatusPageRenderer.render(List.of(), Map.of(), emptyHistory());
+        String html = StatusPageRenderer.render(List.of(), Map.of(), Map.of());
 
         assertTrue(html.contains("reload every 10s"));
         assertTrue(html.contains("probed every minute"));
@@ -214,8 +216,18 @@ class StatusPageRendererTest {
         return count;
     }
 
-    private static StatusHistoryStore emptyHistory() {
-        return new StatusHistoryStore(null);
+    /** What {@code StatusResource} does for real: one {@code snapshotFor} call per queue. */
+    private static Map<String, QueueHistorySnapshot> historyFor(StatusHistoryStore history, QueueStatus... statuses) {
+        Map<String, QueueHistorySnapshot> result = new LinkedHashMap<>();
+        for (QueueStatus status : statuses) {
+            result.put(status.queueName(),
+                    history.snapshotFor(status.queueName(), QueueReport.registeredAddressesOf(status)));
+        }
+        return result;
+    }
+
+    private static Map<String, QueueHistorySnapshot> historyFor(QueueStatus... statuses) {
+        return historyFor(new StatusHistoryStore(null), statuses);
     }
 
     private record StubEndpointCapability(Integer declaredMaxContextLength, Boolean declaredThinkingModeSupported,

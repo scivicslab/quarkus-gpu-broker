@@ -3,6 +3,7 @@ package com.scivicslab.gpubroker.response;
 import java.io.ByteArrayOutputStream;
 
 import com.scivicslab.gpubroker.model.ResponseSink;
+import com.scivicslab.pojoactor.core.ActorRef;
 
 /**
  * The submit-then-poll {@code ResponseSink}: buffers the real AI service's
@@ -16,11 +17,11 @@ import com.scivicslab.gpubroker.model.ResponseSink;
 public final class PolledResponseSink implements ResponseSink {
 
     private final String jobId;
-    private final JobResultStore results;
+    private final ActorRef<JobResultStore> results;
     private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     private String contentType;
 
-    public PolledResponseSink(String jobId, JobResultStore results) {
+    public PolledResponseSink(String jobId, ActorRef<JobResultStore> results) {
         this.jobId = jobId;
         this.results = results;
     }
@@ -37,11 +38,12 @@ public final class PolledResponseSink implements ResponseSink {
 
     @Override
     public void complete() {
-        results.complete(jobId, buffer.toByteArray(), contentType);
+        byte[] body = buffer.toByteArray();
+        results.tell(r -> r.complete(jobId, body, contentType));
     }
 
     @Override
     public void fail(Throwable cause) {
-        results.fail(jobId, cause);
+        results.tell(r -> r.fail(jobId, cause));
     }
 }

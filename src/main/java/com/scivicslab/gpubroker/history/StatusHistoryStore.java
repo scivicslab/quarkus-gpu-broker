@@ -32,12 +32,11 @@ import com.scivicslab.gpubroker.model.QueueStatus;
  * survives a restart — the data behind the status page's history charts
  * (see {@code StatusHistory_260905_oo01}).
  *
- * <p>Not an actor. The only mutation path is {@link #record}, called by
- * {@code StatusHistoryRecorder}'s single scheduled thread; the status page
- * reads concurrently on a request thread. That is one writer and N readers
- * over a handful of maps, which {@code synchronized} covers without
- * introducing a mailbox — an actor here would buy serialization that is
- * already guaranteed by there being exactly one caller of {@link #record}.
+ * <p>A plain POJO, run as an actor ({@code StatusHistoryStoreProducer} wraps it in the one
+ * {@code ActorRef} every caller shares). {@link #record} (the write path, from {@code
+ * StatusHistoryRecorder}'s schedule) and the read methods the status page and {@code GET /queues}
+ * call all go through the same mailbox, the same protection {@code JobQueue} relies on for its
+ * own maps — no method here needs {@code synchronized} of its own.</p>
  */
 public class StatusHistoryStore {
 
@@ -65,7 +64,7 @@ public class StatusHistoryStore {
     }
 
     /** Reads the file back, keeping only buckets inside the retention window, and prunes the file to match. */
-    public synchronized void load(Instant now) {
+    public void load(Instant now) {
         if (historyFile == null || !Files.exists(historyFile)) {
             return;
         }
@@ -91,7 +90,7 @@ public class StatusHistoryStore {
      * Folds one round of observations into the open bucket, closing the previous one first if
      * {@code now} has crossed a ten-minute boundary.
      */
-    public synchronized void record(Instant now, List<ProbeObservation> probes, List<QueueStatus> statuses) {
+    public void record(Instant now, List<ProbeObservation> probes, List<QueueStatus> statuses) {
         Instant bucketStart = floorToBucket(now);
         if (openBucketStart == null) {
             openBucketStart = bucketStart;
@@ -151,7 +150,7 @@ public class StatusHistoryStore {
     }
 
     /** Closes whatever is still open — called at shutdown so the last partial bucket is not lost. */
-    public synchronized void flush() {
+    public void flush() {
         if (openQueueBuckets.isEmpty() && openEndpointBuckets.isEmpty()) {
             return;
         }
@@ -170,7 +169,7 @@ public class StatusHistoryStore {
      * what {@code load} already takes care to avoid for two rows read from the file, so the same
      * care is needed here for a closed-then-reopened pair.</p>
      */
-    public synchronized List<QueueBucket> queueHistory(String queueName) {
+    public List<QueueBucket> queueHistory(String queueName) {
         List<QueueBucket> history = new ArrayList<>(closedQueueBuckets.getOrDefault(queueName, new ArrayDeque<>()));
         QueueBucket open = openQueueBuckets.get(queueName);
         if (open == null) {
@@ -185,7 +184,7 @@ public class StatusHistoryStore {
     }
 
     /** Every address ever observed for one queue, in a stable order. */
-    public synchronized List<String> addressesOf(String queueName) {
+    public List<String> addressesOf(String queueName) {
         TreeSet<String> addresses = new TreeSet<>();
         for (Deque<EndpointBucket> buckets : closedEndpointBuckets.values()) {
             EndpointBucket last = buckets.peekLast();
@@ -207,7 +206,7 @@ public class StatusHistoryStore {
      * <p>Merges the open bucket into the last closed one when they share a {@code bucketStart} —
      * see {@link #queueHistory} for why this happens and why it must be merged, not appended.</p>
      */
-    public synchronized List<EndpointBucket> endpointHistory(String address) {
+    public List<EndpointBucket> endpointHistory(String address) {
         List<EndpointBucket> history = new ArrayList<>(closedEndpointBuckets.getOrDefault(address, new ArrayDeque<>()));
         EndpointBucket open = openEndpointBuckets.get(address);
         if (open == null) {
@@ -222,10 +221,43 @@ public class StatusHistoryStore {
     }
 
     /**
+     * Everything one queue's reporting (both {@code GET /queues} and the status page) needs,
+     * gathered in a single call — one {@code ask} per queue instead of one per address plus one
+     * for the queue history plus one for the throughput figure, now that every read goes through
+     * this actor's mailbox rather than a directly-shared map.
+     *
+     * @param queueName       the queue to report on
+     * @param knownAddresses  addresses {@code JobQueue} currently has registered for this queue
+     *                        (active or idle), even if none of them has ever answered a probe —
+     *                        merged with every address this store has ever observed for the queue
+     * @return the queue's congestion history, its last-hour throughput, and per-address liveness
+     *         history keyed by address (insertion order = address's natural sort order)
+     */
+    public QueueHistorySnapshot snapshotFor(String queueName, java.util.Collection<String> knownAddresses) {
+        TreeSet<String> addresses = new TreeSet<>(addressesOf(queueName));
+        addresses.addAll(knownAddresses);
+        Map<String, List<EndpointBucket>> endpoints = new LinkedHashMap<>();
+        for (String address : addresses) {
+            endpoints.put(address, endpointHistory(address));
+        }
+        return new QueueHistorySnapshot(queueHistory(queueName), completedLastHour(queueName), endpoints);
+    }
+
+    /**
+     * One queue's history-based reporting data, as returned by {@link #snapshotFor}.
+     *
+     * @param queueBuckets       the queue's congestion/throughput history, oldest first
+     * @param completedLastHour  jobs finished in the last hour, for the estimated-wait calculation
+     * @param endpointHistories  each known address's liveness history, oldest first per address
+     */
+    public record QueueHistorySnapshot(List<QueueBucket> queueBuckets, long completedLastHour,
+                                       Map<String, List<EndpointBucket>> endpointHistories) {}
+
+    /**
      * Jobs finished in the last hour for one queue — the denominator of the estimated wait
      * (see {@code StatusHistory_260905_oo01} "なぜ推定待ち時間の分母を直近1時間にするか").
      */
-    public synchronized long completedLastHour(String queueName) {
+    public long completedLastHour(String queueName) {
         List<QueueBucket> history = queueHistory(queueName);
         int bucketsPerHour = (int) (Duration.ofHours(1).toMinutes() / BUCKET_LENGTH.toMinutes());
         long total = 0;

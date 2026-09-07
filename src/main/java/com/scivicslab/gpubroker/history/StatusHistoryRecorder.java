@@ -20,6 +20,7 @@ import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.config.EndpointInfo;
 import com.scivicslab.gpubroker.config.EndpointProbe;
 import com.scivicslab.gpubroker.model.QueueStatus;
+import com.scivicslab.pojoactor.core.ActorRef;
 
 import io.quarkus.runtime.ShutdownEvent;
 import io.quarkus.scheduler.Scheduled;
@@ -59,13 +60,14 @@ public class StatusHistoryRecorder {
     BrokerConfig brokerConfig;
 
     @Inject
-    StatusHistoryStore store;
+    ActorRef<StatusHistoryStore> store;
 
     @Scheduled(every = "1m")
     void observe() {
         try {
             List<QueueStatus> statuses = queues.statusSnapshot();
-            store.record(Instant.now(), probeAll(statuses), statuses);
+            List<ProbeObservation> probes = probeAll(statuses);
+            store.tell(s -> s.record(Instant.now(), probes, statuses));
         } catch (RuntimeException e) {
             // A scheduled method that throws is retried but never recovers on its own;
             // one failed round of observation must not stop later rounds.
@@ -74,7 +76,9 @@ public class StatusHistoryRecorder {
     }
 
     void onShutdown(@Observes ShutdownEvent event) {
-        store.flush();
+        // Waits for completion (not a bare tell) so the last partial bucket is on disk before
+        // ActorSystemProducer.onStop terminates the system this actor's mailbox thread lives on.
+        store.tell(StatusHistoryStore::flush).join();
     }
 
     /**

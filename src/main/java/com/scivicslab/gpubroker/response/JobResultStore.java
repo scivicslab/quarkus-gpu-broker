@@ -2,13 +2,10 @@ package com.scivicslab.gpubroker.response;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-
-import io.quarkus.scheduler.Scheduled;
-import jakarta.inject.Singleton;
 
 /**
  * Holds {@code jobId} to {@link JobResult} for the non-streaming (submit-
@@ -21,13 +18,18 @@ import jakarta.inject.Singleton;
  * #get}, because an entry nobody ever polls would otherwise never be
  * checked at all — which is exactly the unbounded-growth problem this class
  * exists to prevent.
+ *
+ * <p>A plain POJO, run as an actor ({@code JobResultStoreProducer} wraps it
+ * in the one {@code ActorRef} every caller shares) — its mailbox is what
+ * makes {@link #results} safe to mutate from {@link #register}, {@link
+ * #complete}, {@link #fail}, and the scheduled {@link #sweep} without a
+ * concurrent map of its own, the same reason {@code JobQueue} needs none.</p>
  */
-@Singleton
 public class JobResultStore {
 
     private static final Duration DEFAULT_TTL = Duration.ofHours(1);
 
-    private final Map<String, JobResult> results = new ConcurrentHashMap<>();
+    private final Map<String, JobResult> results = new HashMap<>();
     private final Duration ttl;
 
     public JobResultStore() {
@@ -57,7 +59,7 @@ public class JobResultStore {
         return Optional.ofNullable(results.get(jobId));
     }
 
-    @Scheduled(every = "10m")
+    /** Called on a schedule by {@code JobResultSweepScheduler}, via this actor's own mailbox. */
     void sweep() {
         Instant cutoff = Instant.now().minus(ttl);
         results.values().removeIf(r -> r.createdAt().isBefore(cutoff));

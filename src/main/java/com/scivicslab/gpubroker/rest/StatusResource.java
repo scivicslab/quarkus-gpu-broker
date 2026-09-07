@@ -2,11 +2,16 @@ package com.scivicslab.gpubroker.rest;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
 import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.history.StatusHistoryStore;
+import com.scivicslab.gpubroker.history.StatusHistoryStore.QueueHistorySnapshot;
+import com.scivicslab.gpubroker.model.QueueStatus;
+import com.scivicslab.pojoactor.core.ActorRef;
 
 import io.smallrye.common.annotation.Blocking;
 import jakarta.inject.Inject;
@@ -24,8 +29,8 @@ import jakarta.ws.rs.core.MediaType;
  * path would exist for no reason.
  *
  * <p>{@code @Blocking} for the same reason as {@code AsyncJobResource}:
- * {@link JobQueueRegistry#statusSnapshot()} calls {@code ask(...).join()}
- * per queue, which must not run on the I/O thread.
+ * {@link JobQueueRegistry#statusSnapshot()} and {@link #historyByQueue} both
+ * call {@code ask(...).join()}, which must not run on the I/O thread.
  */
 @Path("/")
 public class StatusResource {
@@ -37,13 +42,14 @@ public class StatusResource {
     BrokerConfig brokerConfig;
 
     @Inject
-    StatusHistoryStore history;
+    ActorRef<StatusHistoryStore> history;
 
     @GET
     @Blocking
     @Produces(MediaType.TEXT_HTML)
     public String status() {
-        return StatusPageRenderer.render(queues.statusSnapshot(), brokerConfig.capabilities(), history);
+        List<QueueStatus> statuses = queues.statusSnapshot();
+        return StatusPageRenderer.render(statuses, brokerConfig.capabilities(), historyByQueue(statuses));
     }
 
     /**
@@ -71,9 +77,21 @@ public class StatusResource {
     @Produces(MediaType.APPLICATION_JSON)
     public List<QueueReport> queues(@QueryParam("since") String since) {
         Instant sinceInstant = parseSince(since);
-        return queues.statusSnapshot().stream()
-                .map(status -> QueueReport.of(status, history, sinceInstant))
+        List<QueueStatus> statuses = queues.statusSnapshot();
+        Map<String, QueueHistorySnapshot> historyByQueue = historyByQueue(statuses);
+        return statuses.stream()
+                .map(status -> QueueReport.of(status, historyByQueue.get(status.queueName()), sinceInstant))
                 .toList();
+    }
+
+    /** One {@code ask} per queue, gathering everything {@link QueueReport}/{@link StatusPageRenderer} need. */
+    private Map<String, QueueHistorySnapshot> historyByQueue(List<QueueStatus> statuses) {
+        Map<String, QueueHistorySnapshot> result = new LinkedHashMap<>();
+        for (QueueStatus status : statuses) {
+            List<String> known = QueueReport.registeredAddressesOf(status);
+            result.put(status.queueName(), history.ask(h -> h.snapshotFor(status.queueName(), known)).join());
+        }
+        return result;
     }
 
     private static Instant parseSince(String since) {

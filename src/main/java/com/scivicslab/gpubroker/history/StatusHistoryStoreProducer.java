@@ -6,17 +6,20 @@ import java.util.Optional;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
+import com.scivicslab.pojoactor.core.ActorRef;
+import com.scivicslab.pojoactor.core.ActorSystem;
+
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
 
 /**
- * The single place that decides where the status history file lives and
- * loads it back at startup — the same role {@code ActorSystemProducer} plays
- * for the {@code ActorSystem}.
+ * The single place that decides where the status history file lives, loads it back at startup,
+ * and wraps the result as an actor — the same role {@code ActorSystemProducer} plays for the
+ * {@code ActorSystem} itself.
  *
  * <p>{@code broker.history.file} is read here rather than inside {@link
  * StatusHistoryStore} so that the store stays a plain object a unit test can
- * construct against a temporary directory.
+ * construct directly against a temporary directory, with no {@code ActorRef} involved.
  */
 @Singleton
 public class StatusHistoryStoreProducer {
@@ -29,10 +32,10 @@ public class StatusHistoryStoreProducer {
 
     @Produces
     @Singleton
-    public StatusHistoryStore statusHistoryStore() {
+    public ActorRef<StatusHistoryStore> statusHistoryStore(ActorSystem system) {
         StatusHistoryStore store = new StatusHistoryStore(historyFile(configuredPath));
         store.load(Instant.now());
-        return store;
+        return system.actorOf("status-history", store);
     }
 
     /**

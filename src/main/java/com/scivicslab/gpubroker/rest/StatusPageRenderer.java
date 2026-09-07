@@ -7,6 +7,7 @@ import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.history.EndpointBucket;
 import com.scivicslab.gpubroker.history.QueueBucket;
 import com.scivicslab.gpubroker.history.StatusHistoryStore;
+import com.scivicslab.gpubroker.history.StatusHistoryStore.QueueHistorySnapshot;
 import com.scivicslab.gpubroker.model.QueueSnapshot;
 import com.scivicslab.gpubroker.model.QueueStatus;
 
@@ -39,7 +40,7 @@ final class StatusPageRenderer {
     }
 
     static String render(List<QueueStatus> statuses, Map<String, BrokerConfig.EndpointCapability> capabilities,
-                         StatusHistoryStore history) {
+                         Map<String, QueueHistorySnapshot> historyByQueue) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">")
                 .append("<meta http-equiv=\"refresh\" content=\"10\">")
@@ -55,7 +56,7 @@ final class StatusPageRenderer {
             html.append("<p class=\"empty\">No queues discovered yet.</p>");
         }
         for (QueueStatus status : statuses) {
-            html.append(renderCard(status, capabilities, history));
+            html.append(renderCard(status, capabilities, historyByQueue.get(status.queueName())));
         }
 
         html.append("</main></body></html>");
@@ -105,10 +106,10 @@ final class StatusPageRenderer {
     }
 
     private static String renderCard(QueueStatus status, Map<String, BrokerConfig.EndpointCapability> capabilities,
-                                     StatusHistoryStore history) {
+                                     QueueHistorySnapshot snapshot) {
         QueueSnapshot s = status.snapshot();
-        List<QueueBucket> buckets = history.queueHistory(status.queueName());
-        long completedLastHour = history.completedLastHour(status.queueName());
+        List<QueueBucket> buckets = snapshot.queueBuckets();
+        long completedLastHour = snapshot.completedLastHour();
 
         StringBuilder card = new StringBuilder();
         card.append("<div class=\"card\"><div class=\"head\"><span class=\"name\">")
@@ -123,7 +124,7 @@ final class StatusPageRenderer {
         appendCurrentBar(card, s);
         appendQueueAndThroughputChart(card, buckets);
         appendUtilizationChart(card, buckets, s);
-        appendLivenessBands(card, status, history, capabilities);
+        appendLivenessBands(card, snapshot, capabilities);
 
         card.append("</div>");
         return card.toString();
@@ -284,20 +285,19 @@ final class StatusPageRenderer {
     }
 
     /** One row per address: 144 cells coloured by how many of that bucket's probes it answered. */
-    private static void appendLivenessBands(StringBuilder card, QueueStatus status, StatusHistoryStore history,
+    private static void appendLivenessBands(StringBuilder card, QueueHistorySnapshot snapshot,
                                             Map<String, BrokerConfig.EndpointCapability> capabilities) {
-        List<String> addresses = QueueReport.addressesOf(status, history);
         card.append("<section><h2>liveness &mdash; 24h, probed every minute</h2>");
-        if (addresses.isEmpty()) {
+        if (snapshot.endpointHistories().isEmpty()) {
             card.append("<p class=\"empty\">No probe result recorded yet.</p></section>");
             return;
         }
         card.append("<div class=\"bands\">");
-        for (String address : addresses) {
-            card.append("<div class=\"band\"><span class=\"addr\">").append(escape(address));
-            appendDeclaredCapability(card, capabilities.get(address));
+        for (var entry : snapshot.endpointHistories().entrySet()) {
+            card.append("<div class=\"band\"><span class=\"addr\">").append(escape(entry.getKey()));
+            appendDeclaredCapability(card, capabilities.get(entry.getKey()));
             card.append("</span><span class=\"strip\">");
-            appendBand(card, history.endpointHistory(address));
+            appendBand(card, entry.getValue());
             card.append("</span></div>");
         }
         card.append("</div></section>");

@@ -7,7 +7,7 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 
 import com.scivicslab.gpubroker.history.EndpointBucket;
-import com.scivicslab.gpubroker.history.StatusHistoryStore;
+import com.scivicslab.gpubroker.history.StatusHistoryStore.QueueHistorySnapshot;
 import com.scivicslab.gpubroker.model.QueueSnapshot;
 import com.scivicslab.gpubroker.model.QueueStatus;
 
@@ -31,19 +31,20 @@ public record QueueReport(String name, int activeSlots, int idleSlots, int total
                           int pendingJobs, long completedLastHour, boolean ready,
                           List<EndpointReport> endpoints) {
 
-    public static QueueReport of(QueueStatus status, StatusHistoryStore history) {
-        return of(status, history, null);
+    public static QueueReport of(QueueStatus status, QueueHistorySnapshot snapshot) {
+        return of(status, snapshot, null);
     }
 
     /**
      * @param since include every probe window at or after this instant, instead of only the most
      *              recent one; {@code null} for the default (most-recent-only) behaviour
      */
-    public static QueueReport of(QueueStatus status, StatusHistoryStore history, Instant since) {
-        QueueSnapshot snapshot = status.snapshot();
+    public static QueueReport of(QueueStatus status, QueueHistorySnapshot snapshot, Instant since) {
+        QueueSnapshot now = status.snapshot();
         List<EndpointReport> endpoints = new ArrayList<>();
-        for (String address : addressesOf(status, history)) {
-            List<EndpointBucket> observed = history.endpointHistory(address);
+        for (var entry : snapshot.endpointHistories().entrySet()) {
+            String address = entry.getKey();
+            List<EndpointBucket> observed = entry.getValue();
             if (since == null) {
                 endpoints.add(observed.isEmpty()
                         ? EndpointReport.unprobed(address)
@@ -59,9 +60,9 @@ public record QueueReport(String name, int activeSlots, int idleSlots, int total
                 inRange.forEach(bucket -> endpoints.add(EndpointReport.of(bucket)));
             }
         }
-        int total = snapshot.activeCount() + snapshot.idleCount();
-        return new QueueReport(status.queueName(), snapshot.activeCount(), snapshot.idleCount(), total,
-                snapshot.pendingCount(), history.completedLastHour(status.queueName()),
+        int total = now.activeCount() + now.idleCount();
+        return new QueueReport(status.queueName(), now.activeCount(), now.idleCount(), total,
+                now.pendingCount(), snapshot.completedLastHour(),
                 isReady(total, endpoints), List.copyOf(endpoints));
     }
 
@@ -84,13 +85,13 @@ public record QueueReport(String name, int activeSlots, int idleSlots, int total
     }
 
     /**
-     * Every address this queue should report: those the probe has observed, plus those currently
-     * registered in {@code JobQueue}. The second source matters in the first minute after
-     * startup, before any probe has run. The status page draws its liveness rows from the same
-     * list, so both surfaces name the same addresses.
+     * Every address currently registered in {@code JobQueue} for one queue (active or idle) —
+     * what a caller passes as {@code knownAddresses} to {@code StatusHistoryStore.snapshotFor} so
+     * an address with slots but no probe history yet (the first minute after startup) still gets
+     * reported, not just addresses the probe has already observed.
      */
-    static List<String> addressesOf(QueueStatus status, StatusHistoryStore history) {
-        SortedSet<String> addresses = new TreeSet<>(history.addressesOf(status.queueName()));
+    public static List<String> registeredAddressesOf(QueueStatus status) {
+        SortedSet<String> addresses = new TreeSet<>();
         for (String workerId : status.snapshot().activeEndpointIds()) {
             addresses.add(physicalAddress(workerId));
         }
