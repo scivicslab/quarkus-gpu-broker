@@ -5,12 +5,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.jboss.logging.Logger;
 
@@ -67,11 +65,8 @@ public class JobQueueRegistry {
     @Inject
     AiServiceEndpointBuilder builder;
 
-    private final Map<String, ActorRef<JobQueue>> queues = new ConcurrentHashMap<>();
-    /** {@code queueName} -> {@link EndpointInfo#displayName}, for {@code OpenAiCompatResource}'s
-     *  {@code GET /v1/models} -- see {@code OpenAiCompatFacade_260822_oo01}. */
-    private final Map<String, String> displayNames = new ConcurrentHashMap<>();
-    private final AtomicBoolean draining = new AtomicBoolean(false);
+    @Inject
+    ActorRef<JobQueueRegistryState> state;
 
     void onStart(@Observes StartupEvent event) {
         ActorRef<ROOT> root = system.actorOf("root", new ROOT());
@@ -114,25 +109,26 @@ public class JobQueueRegistry {
     }
 
     void onShutdown(@Observes ShutdownEvent event) {
-        draining.set(true);
-        for (ActorRef<JobQueue> queue : queues.values()) {
+        state.tell(JobQueueRegistryState::setDraining).join();
+        List<ActorRef<JobQueue>> allQueues = state.ask(JobQueueRegistryState::allQueues).join();
+        for (ActorRef<JobQueue> queue : allQueues) {
             List<Job> pending = queue.ask(JobQueue::drainPending).join();
             pending.forEach(job -> job.responseSink().fail(new DrainingException()));
         }
-        awaitIdle(DRAIN_TIMEOUT);
+        awaitIdle(DRAIN_TIMEOUT, allQueues);
     }
 
     public boolean isDraining() {
-        return draining.get();
+        return state.ask(JobQueueRegistryState::isDraining).join();
     }
 
     public ActorRef<JobQueue> get(String queueName) {
-        return queues.get(queueName);
+        return state.ask(s -> s.get(queueName)).join();
     }
 
     /** One {@link QueueStatus} per registered queue, for {@code GET /status}. */
     public List<QueueStatus> statusSnapshot() {
-        return queues.entrySet().stream()
+        return state.ask(JobQueueRegistryState::queueMap).join().entrySet().stream()
                 .map(e -> new QueueStatus(e.getKey(), e.getValue().ask(JobQueue::snapshot).join()))
                 .toList();
     }
@@ -140,17 +136,16 @@ public class JobQueueRegistry {
     /** {@code queueName} -> {@link EndpointInfo#displayName}, for {@code OpenAiCompatResource}'s
      *  {@code GET /v1/models}. */
     public Map<String, String> displayNames() {
-        return Map.copyOf(displayNames);
+        return state.ask(JobQueueRegistryState::displayNames).join();
     }
 
     private void registerEndpoint(ActorRef<ROOT> root, EndpointProbe probe, EndpointInfo info) {
-        boolean[] isNewQueue = {false};
-        ActorRef<JobQueue> queue = queues.computeIfAbsent(info.queueName(), n -> {
-            isNewQueue[0] = true;
-            return root.createChild(n, new JobQueue());
-        });
-        if (isNewQueue[0]) {
-            displayNames.put(info.queueName(), info.displayName());
+        JobQueueRegistryState.Registration registration = state.ask(s ->
+                s.registerQueue(info.queueName(), () -> root.createChild(info.queueName(), new JobQueue()))
+        ).join();
+        ActorRef<JobQueue> queue = registration.queue();
+        if (registration.isNew()) {
+            state.tell(s -> s.putDisplayName(info.queueName(), info.displayName()));
             queue.tell(q -> q.bind(system, queue));
             queue.tell(JobQueue::startReconciliation);
         }
@@ -162,9 +157,9 @@ public class JobQueueRegistry {
                 probe.getClass().getSimpleName(), info.address(), info.queueName(), info.maxConcurrency());
     }
 
-    private void awaitIdle(Duration timeout) {
+    private void awaitIdle(Duration timeout, List<ActorRef<JobQueue>> allQueues) {
         Instant deadline = Instant.now().plus(timeout);
-        while (Instant.now().isBefore(deadline) && !allQueuesIdle()) {
+        while (Instant.now().isBefore(deadline) && !allQueuesIdle(allQueues)) {
             try {
                 Thread.sleep(200);
             } catch (InterruptedException e) {
@@ -174,7 +169,7 @@ public class JobQueueRegistry {
         }
     }
 
-    private boolean allQueuesIdle() {
-        return queues.values().stream().allMatch(q -> q.ask(JobQueue::isIdle).join());
+    private boolean allQueuesIdle(List<ActorRef<JobQueue>> allQueues) {
+        return allQueues.stream().allMatch(q -> q.ask(JobQueue::isIdle).join());
     }
 }
