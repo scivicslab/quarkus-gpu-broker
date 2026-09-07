@@ -1,5 +1,7 @@
 package com.scivicslab.gpubroker.rest;
 
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
@@ -8,9 +10,11 @@ import com.scivicslab.gpubroker.history.StatusHistoryStore;
 
 import io.smallrye.common.annotation.Blocking;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 
 /**
@@ -54,14 +58,32 @@ public class StatusResource {
      * <p>{@code GET /v1/models} does not answer that question. It lists chat models only, and a
      * {@code 200} from it means the broker is up, not that any particular queue has an endpoint
      * answering.
+     *
+     * @param since ISO-8601 instant (e.g. {@code 2026-09-08T01:30:00Z}); when given, each
+     *              endpoint reports every probe window at or after it instead of only the most
+     *              recent one — for telling "was actually unreachable" apart from "a caller gave
+     *              up waiting" after the fact, which the live snapshot alone cannot do once the
+     *              moment has passed
      */
     @GET
     @Path("queues")
     @Blocking
     @Produces(MediaType.APPLICATION_JSON)
-    public List<QueueReport> queues() {
+    public List<QueueReport> queues(@QueryParam("since") String since) {
+        Instant sinceInstant = parseSince(since);
         return queues.statusSnapshot().stream()
-                .map(status -> QueueReport.of(status, history))
+                .map(status -> QueueReport.of(status, history, sinceInstant))
                 .toList();
+    }
+
+    private static Instant parseSince(String since) {
+        if (since == null || since.isBlank()) {
+            return null;
+        }
+        try {
+            return Instant.parse(since);
+        } catch (DateTimeParseException e) {
+            throw new BadRequestException("since must be an ISO-8601 instant, e.g. 2026-09-08T01:30:00Z: " + since);
+        }
     }
 }

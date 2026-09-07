@@ -1,5 +1,6 @@
 package com.scivicslab.gpubroker.rest;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.SortedSet;
@@ -17,20 +18,46 @@ import com.scivicslab.gpubroker.model.QueueStatus;
  * <p>{@code ready} is the field most callers want. {@code GET /v1/models} only tells them the
  * broker itself answers, and it lists chat models alone, so a caller checking whether embedding
  * work can run learns nothing from it. Here, {@code ready} is true when the queue has a slot and
- * at least one of its addresses answered its most recent probe.
+ * at least one of its addresses answered its most recent probe (or, with {@code since} given,
+ * answered any probe in the window from {@code since} to now).
+ *
+ * <p>{@code activeSlots}/{@code idleSlots}/{@code pendingJobs} always describe right now —
+ * {@code JobQueue} has no historical variant of its own slot bookkeeping to report instead.
+ * {@code since} only widens what {@code endpoints} covers, from one probe window to every closed
+ * window (plus the one still filling) at or after it, oldest first, one entry per window per
+ * address instead of one entry per address total.
  */
 public record QueueReport(String name, int activeSlots, int idleSlots, int totalSlots,
                           int pendingJobs, long completedLastHour, boolean ready,
                           List<EndpointReport> endpoints) {
 
     public static QueueReport of(QueueStatus status, StatusHistoryStore history) {
+        return of(status, history, null);
+    }
+
+    /**
+     * @param since include every probe window at or after this instant, instead of only the most
+     *              recent one; {@code null} for the default (most-recent-only) behaviour
+     */
+    public static QueueReport of(QueueStatus status, StatusHistoryStore history, Instant since) {
         QueueSnapshot snapshot = status.snapshot();
         List<EndpointReport> endpoints = new ArrayList<>();
         for (String address : addressesOf(status, history)) {
             List<EndpointBucket> observed = history.endpointHistory(address);
-            endpoints.add(observed.isEmpty()
-                    ? EndpointReport.unprobed(address)
-                    : EndpointReport.of(observed.get(observed.size() - 1)));
+            if (since == null) {
+                endpoints.add(observed.isEmpty()
+                        ? EndpointReport.unprobed(address)
+                        : EndpointReport.of(observed.get(observed.size() - 1)));
+                continue;
+            }
+            List<EndpointBucket> inRange = observed.stream()
+                    .filter(bucket -> !bucket.bucketStart().isBefore(since))
+                    .toList();
+            if (inRange.isEmpty()) {
+                endpoints.add(EndpointReport.unprobed(address));
+            } else {
+                inRange.forEach(bucket -> endpoints.add(EndpointReport.of(bucket)));
+            }
         }
         int total = snapshot.activeCount() + snapshot.idleCount();
         return new QueueReport(status.queueName(), snapshot.activeCount(), snapshot.idleCount(), total,

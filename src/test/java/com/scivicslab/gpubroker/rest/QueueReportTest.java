@@ -107,6 +107,59 @@ class QueueReportTest {
         assertTrue(report.ready(), "answered at least one probe, so work can still be sent");
     }
 
+    /** {@code since} widens one entry per address to one entry per (address, window) in range. */
+    @Test
+    void since_reportsEveryWindowAtOrAfterIt() {
+        StatusHistoryStore history = new StatusHistoryStore(null);
+        history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
+        history.record(NOON.plus(Duration.ofMinutes(10)),
+                List.of(new ProbeObservation("a:1", "q", false)), List.of());
+
+        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history, NOON);
+
+        assertEquals(2, report.endpoints().size());
+        assertEquals("UP", report.endpoints().get(0).health());
+        assertEquals("DOWN", report.endpoints().get(1).health());
+    }
+
+    /** A window before {@code since} is left out, even though it happened. */
+    @Test
+    void since_excludesWindowsBeforeIt() {
+        StatusHistoryStore history = new StatusHistoryStore(null);
+        history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
+        history.record(NOON.plus(Duration.ofMinutes(10)),
+                List.of(new ProbeObservation("a:1", "q", false)), List.of());
+
+        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history,
+                NOON.plus(Duration.ofMinutes(10)));
+
+        assertEquals(1, report.endpoints().size());
+        assertEquals("DOWN", report.endpoints().get(0).health());
+    }
+
+    /** No window falls at or after {@code since}: reported the same as never having been probed. */
+    @Test
+    void since_afterEveryObservation_reportsUnprobed() {
+        StatusHistoryStore history = new StatusHistoryStore(null);
+        history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
+
+        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history,
+                NOON.plus(Duration.ofHours(1)));
+
+        assertEquals("UNKNOWN", report.endpoints().get(0).health());
+    }
+
+    /** Every reported window carries its own start time, so a caller can place it on a timeline. */
+    @Test
+    void endpointReport_carriesTheWindowItCameFrom() {
+        StatusHistoryStore history = new StatusHistoryStore(null);
+        history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
+
+        QueueReport report = QueueReport.of(status("q", List.of(), List.of("a:1#0"), 0), history);
+
+        assertEquals(NOON.toString(), report.endpoints().get(0).bucketStart());
+    }
+
     @Test
     void reportsThroughputOfTheLastHour() {
         StatusHistoryStore history = new StatusHistoryStore(null);
