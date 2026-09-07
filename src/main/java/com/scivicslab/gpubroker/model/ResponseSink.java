@@ -8,8 +8,13 @@ package com.scivicslab.gpubroker.model;
  * {@code JobQueue} nor the {@code AiServiceEndpoint} knows which one it holds.
  *
  * <p>Call order is always {@code dispatched} once (if the job ever reaches a
- * worker at all), then {@code start} once, then any number of {@code emit}
- * calls, then exactly one of {@code complete} or {@code fail}.
+ * worker at all), then either {@code start}, any number of {@code emit}
+ * calls, and {@code complete} — or {@code fail} in place of any of those,
+ * at any point. {@code HttpAiServiceClient} deliberately raises on a 5xx
+ * response <em>before</em> calling {@code start}, so a job whose every retry
+ * fails that way reaches {@code fail} having never seen {@code start} at
+ * all — an implementation that waits for {@code start} before it considers
+ * the response "underway" must still be able to end things from here.
  */
 public interface ResponseSink {
 
