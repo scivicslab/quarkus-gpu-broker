@@ -178,6 +178,34 @@ class StatusHistoryStoreTest {
         assertEquals(60, store.completedLastHour("q"));
     }
 
+    /**
+     * The gap {@code twoRowsForTheSameWindow_areMergedIntoOneBucketOnLoad} does not cover:
+     * restarting, loading a window already closed by the previous instance's flush, and then
+     * this instance recording a fresh observation for that same still-current window. Without
+     * merging, {@code endpointHistory}/{@code queueHistory} would report that one window twice —
+     * observed live the first time {@code since} exposed the full list instead of only its tail.
+     */
+    @Test
+    void recordingIntoAWindowAlreadyLoadedAsClosed_mergesRatherThanDuplicates() {
+        Path file = directory.resolve("history.jsonl");
+        StatusHistoryStore first = new StatusHistoryStore(file);
+        first.record(NOON, probes(true), List.of(status("q", 2, 0, 4, 0, 0)));
+        first.flush();
+
+        StatusHistoryStore restarted = new StatusHistoryStore(file);
+        restarted.load(NOON.plus(Duration.ofMinutes(1)));
+        // Same window as the loaded, already-closed bucket — not yet crossed into the next one.
+        restarted.record(NOON.plus(Duration.ofMinutes(1)), probes(true), List.of(status("q", 4, 0, 8, 0, 0)));
+
+        List<QueueBucket> queueHistory = restarted.queueHistory("q");
+        assertEquals(1, queueHistory.size(), "one window, one bucket");
+        assertEquals(2, queueHistory.get(0).sampleCount());
+
+        List<EndpointBucket> endpointHistory = restarted.endpointHistory("10.0.0.1:8000");
+        assertEquals(1, endpointHistory.size(), "one window, one bucket");
+        assertEquals(2, endpointHistory.get(0).probeTotal());
+    }
+
     @Test
     void addressesOfAQueue_areListedOnce() {
         StatusHistoryStore store = new StatusHistoryStore(null);

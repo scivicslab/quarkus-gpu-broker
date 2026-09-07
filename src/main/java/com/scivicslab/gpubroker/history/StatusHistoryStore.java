@@ -158,11 +158,27 @@ public class StatusHistoryStore {
         closeOpenBuckets();
     }
 
-    /** Closed buckets for one queue, oldest first, plus the bucket still being filled. */
+    /**
+     * Closed buckets for one queue, oldest first, plus the bucket still being filled.
+     *
+     * <p>Restarting inside a ten-minute window can leave the open bucket sharing its
+     * {@code bucketStart} with the last closed one: {@link #load} restored a window as already
+     * closed (merged from the previous instance's own restart-time flush — see
+     * {@code twoRowsForTheSameWindow_areMergedIntoOneBucketOnLoad}), and then this instance's
+     * first {@link #record} for that same still-current window opened a fresh bucket rather than
+     * reopening the restored one. Left unmerged, that one window would report as two — exactly
+     * what {@code load} already takes care to avoid for two rows read from the file, so the same
+     * care is needed here for a closed-then-reopened pair.</p>
+     */
     public synchronized List<QueueBucket> queueHistory(String queueName) {
         List<QueueBucket> history = new ArrayList<>(closedQueueBuckets.getOrDefault(queueName, new ArrayDeque<>()));
         QueueBucket open = openQueueBuckets.get(queueName);
-        if (open != null) {
+        if (open == null) {
+            return history;
+        }
+        if (!history.isEmpty() && history.get(history.size() - 1).bucketStart().equals(open.bucketStart())) {
+            history.set(history.size() - 1, history.get(history.size() - 1).mergedWith(open));
+        } else {
             history.add(open);
         }
         return history;
@@ -185,11 +201,21 @@ public class StatusHistoryStore {
         return List.copyOf(addresses);
     }
 
-    /** Closed liveness buckets for one address, oldest first, plus the bucket still being filled. */
+    /**
+     * Closed liveness buckets for one address, oldest first, plus the bucket still being filled.
+     *
+     * <p>Merges the open bucket into the last closed one when they share a {@code bucketStart} —
+     * see {@link #queueHistory} for why this happens and why it must be merged, not appended.</p>
+     */
     public synchronized List<EndpointBucket> endpointHistory(String address) {
         List<EndpointBucket> history = new ArrayList<>(closedEndpointBuckets.getOrDefault(address, new ArrayDeque<>()));
         EndpointBucket open = openEndpointBuckets.get(address);
-        if (open != null) {
+        if (open == null) {
+            return history;
+        }
+        if (!history.isEmpty() && history.get(history.size() - 1).bucketStart().equals(open.bucketStart())) {
+            history.set(history.size() - 1, history.get(history.size() - 1).mergedWith(open));
+        } else {
             history.add(open);
         }
         return history;
