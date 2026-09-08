@@ -45,6 +45,7 @@ final class StatusPageRenderer {
         html.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">")
                 .append("<meta http-equiv=\"refresh\" content=\"10\">")
                 .append("<title>gpu-broker status</title>")
+                .append("<link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\">")
                 .append(style())
                 .append("</head><body><header><h1>gpu-broker</h1>")
                 .append("<p class=\"sub\">the numbers below reload every 10s &middot; ")
