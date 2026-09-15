@@ -98,6 +98,6 @@ public final class GenerationMeasuringResponseSink implements ResponseSink {
         long first = dispatched == 0 || firstText == 0 ? 0 : firstText - dispatched;
         long decode = firstText == 0 ? 0 : lastText - firstText;
         report.accept(new GenerationMeasurement(queueName, address, queued, first, decode,
-                scanner.events()));
+                scanner.events(), scanner.characters()));
     }
 }

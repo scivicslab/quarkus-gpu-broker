@@ -18,22 +18,24 @@ import com.scivicslab.gpubroker.model.GenerationMeasurement;
  * @param decodeMs    time from first generated text to last, summed
  * @param queuedMs    time spent waiting for a slot, summed
  * @param firstMs     time from being handed to a worker to the first generated text, summed
+ * @param characters  characters of generated text, summed
  */
 public record GenerationTotals(long generations, long tokens, long decodeMs,
-                               long queuedMs, long firstMs) {
+                               long queuedMs, long firstMs, long characters) {
 
-    public static final GenerationTotals NONE = new GenerationTotals(0, 0, 0, 0, 0);
+    public static final GenerationTotals NONE = new GenerationTotals(0, 0, 0, 0, 0, 0);
 
     /** This bucket plus one reply that has just ended. */
     public GenerationTotals plus(GenerationMeasurement one) {
         return new GenerationTotals(generations + 1, tokens + one.tokens(), decodeMs + one.decodeMs(),
-                queuedMs + one.queuedMs(), firstMs + one.firstMs());
+                queuedMs + one.queuedMs(), firstMs + one.firstMs(), characters + one.characters());
     }
 
     /** Two records of the same window, added together. */
     public GenerationTotals plus(GenerationTotals other) {
         return new GenerationTotals(generations + other.generations(), tokens + other.tokens(),
-                decodeMs + other.decodeMs(), queuedMs + other.queuedMs(), firstMs + other.firstMs());
+                decodeMs + other.decodeMs(), queuedMs + other.queuedMs(), firstMs + other.firstMs(),
+                characters + other.characters());
     }
 
     /**
@@ -55,6 +57,21 @@ public record GenerationTotals(long generations, long tokens, long decodeMs,
     public double tokensPerSecondOver(Duration window) {
         long seconds = window.toSeconds();
         return seconds == 0 ? 0 : (double) tokens / seconds;
+    }
+
+    /**
+     * How fast one reply arrived in characters a second -- the same measurement as
+     * {@link #tokensPerSecondPerReply} in a unit that does not depend on the tokenizer, and so the
+     * one to put two models side by side with.
+     */
+    public double charactersPerSecondPerReply() {
+        return decodeMs == 0 ? 0 : characters * 1000.0 / decodeMs;
+    }
+
+    /** Characters produced per second of wall clock, by whatever this bucket belongs to. */
+    public double charactersPerSecondOver(Duration window) {
+        long seconds = window.toSeconds();
+        return seconds == 0 ? 0 : (double) characters / seconds;
     }
 
     /** Mean wait for a slot. The figure that explains a queue of one slot. */

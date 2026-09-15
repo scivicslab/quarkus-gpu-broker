@@ -24,8 +24,8 @@ class GenerationInTheHistoryTest {
     void recordGeneration_foldsIntoTheQueueAndTheAddress(@TempDir Path dir) {
         StatusHistoryStore store = new StatusHistoryStore(dir.resolve("history.jsonl"));
 
-        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.1:8000", 1500, 200, 4000, 400));
-        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.2:8000", 500, 100, 2000, 200));
+        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.1:8000", 1500, 200, 4000, 400, 1200));
+        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.2:8000", 500, 100, 2000, 200, 600));
 
         GenerationTotals queue = last(store.queueHistory("vllm-a")).generated();
         assertEquals(2, queue.generations());
@@ -41,7 +41,7 @@ class GenerationInTheHistoryTest {
     void recordGeneration_forAJobThatNeverReachedAServer_countsOnTheQueueOnly(@TempDir Path dir) {
         StatusHistoryStore store = new StatusHistoryStore(dir.resolve("history.jsonl"));
 
-        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", null, 900, 0, 0, 0));
+        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", null, 900, 0, 0, 0, 0));
 
         assertEquals(1, last(store.queueHistory("vllm-a")).generated().generations());
         assertTrue(store.addressesOf("vllm-a").isEmpty());
@@ -71,7 +71,7 @@ class GenerationInTheHistoryTest {
     void whatWasMeasured_survivesBeingWrittenAndReadBack(@TempDir Path dir) {
         Path file = dir.resolve("history.jsonl");
         StatusHistoryStore writing = new StatusHistoryStore(file);
-        writing.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.1:8000", 1500, 200, 4000, 400));
+        writing.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.1:8000", 1500, 200, 4000, 400, 1200));
         writing.flush();
 
         StatusHistoryStore reading = new StatusHistoryStore(file);
@@ -83,6 +83,7 @@ class GenerationInTheHistoryTest {
         assertEquals(4000, totals.decodeMs());
         assertEquals(1500, totals.queuedMs());
         assertEquals(200, totals.firstMs());
+        assertEquals(1200, totals.characters());
     }
 
     private static <T> T last(List<T> list) {

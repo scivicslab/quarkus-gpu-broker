@@ -15,20 +15,26 @@ import com.scivicslab.gpubroker.history.StatusHistoryStore;
  * <p>{@code meanQueuedMs} is the part no vLLM server can report: its own clock starts when the
  * request reaches it. A queue with one slot spends its time here, not in generation.
  *
- * <p>Comparable for one model over time, and between machines running that same model. Not
- * comparable between models: the tokenizers differ, so the same sentence is a different number of
- * tokens.
+ * <p>The token figures are comparable for one model over time and between machines running that
+ * same model, but not between models: the tokenizers differ, so one sentence is a different number
+ * of tokens. The character figures are the same measurement in a unit that does not depend on the
+ * tokenizer, which is what two models are put side by side with.
  */
 public record GenerationRateReport(long replies, long tokens, double tokensPerSecond,
-                                   double tokensPerSecondPerReply, long meanQueuedMs,
-                                   long meanFirstTokenMs) {
+                                   double tokensPerSecondPerReply, long characters,
+                                   double charactersPerSecond, double charactersPerSecondPerReply,
+                                   long meanQueuedMs, long meanFirstTokenMs) {
 
-    public static final GenerationRateReport NONE = new GenerationRateReport(0, 0, 0, 0, 0, 0);
+    public static final GenerationRateReport NONE =
+            new GenerationRateReport(0, 0, 0, 0, 0, 0, 0, 0, 0);
 
     public static GenerationRateReport of(GenerationTotals totals) {
         return new GenerationRateReport(totals.generations(), totals.tokens(),
                 round(totals.tokensPerSecondOver(StatusHistoryStore.BUCKET_LENGTH)),
                 round(totals.tokensPerSecondPerReply()),
+                totals.characters(),
+                round(totals.charactersPerSecondOver(StatusHistoryStore.BUCKET_LENGTH)),
+                round(totals.charactersPerSecondPerReply()),
                 totals.meanQueuedMs(), totals.meanFirstMs());
     }
 

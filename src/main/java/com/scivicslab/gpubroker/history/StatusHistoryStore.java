@@ -408,12 +408,13 @@ public class StatusHistoryStore {
         node.put("decodeMs", totals.decodeMs());
         node.put("queuedMs", totals.queuedMs());
         node.put("firstMs", totals.firstMs());
+        node.put("characters", totals.characters());
     }
 
     private static GenerationTotals generatedOf(JsonNode node) {
         return new GenerationTotals(node.path("generations").asLong(), node.path("tokens").asLong(),
                 node.path("decodeMs").asLong(), node.path("queuedMs").asLong(),
-                node.path("firstMs").asLong());
+                node.path("firstMs").asLong(), node.path("characters").asLong());
     }
 
     private void append(List<String> lines) {

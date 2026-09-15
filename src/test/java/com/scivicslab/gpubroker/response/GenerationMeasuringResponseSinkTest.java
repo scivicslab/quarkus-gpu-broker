@@ -51,6 +51,7 @@ class GenerationMeasuringResponseSinkTest {
         assertEquals("vllm-test", one.queueName());
         assertEquals("192.168.5.16:8000", one.address());
         assertEquals(3, one.tokens(), "one event carrying text counts as one token");
+        assertEquals(13, one.characters(), "\"one \" + \"two \" + \"three\"");
         assertEquals(3, kept.chunks.size(), "everything is forwarded unchanged");
     }
 
@@ -103,7 +104,7 @@ class GenerationMeasuringResponseSinkTest {
         // Four replies of 100 tokens each, every one of them taking 10 seconds of generation.
         GenerationTotals totals = GenerationTotals.NONE;
         for (int i = 0; i < 4; i++) {
-            totals = totals.plus(new GenerationMeasurement("vllm-test", "a:1", 2000, 300, 10_000, 100));
+            totals = totals.plus(new GenerationMeasurement("vllm-test", "a:1", 2000, 300, 10_000, 100, 350));
         }
 
         // One reply at a time reads as 10 tok/s …
@@ -112,14 +113,32 @@ class GenerationMeasuringResponseSinkTest {
         assertEquals(400 / 600.0, totals.tokensPerSecondOver(Duration.ofMinutes(10)), 1e-9);
         assertEquals(2000, totals.meanQueuedMs());
         assertEquals(300, totals.meanFirstMs());
+        // The same speed in the unit two different models can be put side by side in.
+        assertEquals(35.0, totals.charactersPerSecondPerReply(), 1e-9);
+    }
+
+    @Test
+    void charactersAreCountedWhateverTheTokenizerDid() {
+        List<GenerationMeasurement> reported = new ArrayList<>();
+        GenerationMeasuringResponseSink sink =
+                new GenerationMeasuringResponseSink(new Kept(), "vllm-test", reported::add);
+        sink.dispatched();
+        sink.start("text/event-stream");
+        // Japanese arrives as raw UTF-8, three bytes to the character.
+        sink.emit(event("起動時"));
+        // And an escape is one character however many bytes it takes.
+        sink.emit(event("a\\nb"));
+        sink.complete();
+
+        assertEquals(6, reported.get(0).characters(), "3 Japanese characters + a, newline, b");
     }
 
     @Test
     void sums_addUpAcrossBuckets() {
         GenerationTotals one = GenerationTotals.NONE
-                .plus(new GenerationMeasurement("q", "a:1", 1, 2, 3, 4));
+                .plus(new GenerationMeasurement("q", "a:1", 1, 2, 3, 4, 5));
         GenerationTotals two = GenerationTotals.NONE
-                .plus(new GenerationMeasurement("q", "a:1", 10, 20, 30, 40));
+                .plus(new GenerationMeasurement("q", "a:1", 10, 20, 30, 40, 50));
         GenerationTotals both = one.plus(two);
 
         assertEquals(2, both.generations());

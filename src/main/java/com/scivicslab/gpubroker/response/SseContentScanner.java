@@ -28,6 +28,7 @@ public final class SseContentScanner {
 
     private byte[] pending = new byte[0];
     private long events;
+    private long characters;
 
     /**
      * Takes one chunk off the wire. Whole lines only are read: a marker split across two chunks is
@@ -59,6 +60,7 @@ public final class SseContentScanner {
             to = Math.min(to, end);
             if (to > from) {
                 events++;
+                characters += charactersIn(all, from, to);
                 found.text(all, from, to);
             }
             at = to + 1;
@@ -74,6 +76,43 @@ public final class SseContentScanner {
      */
     public long events() {
         return events;
+    }
+
+    /**
+     * How many characters of generated text have come through.
+     *
+     * <p>Unlike {@link #events}, comparable between models: one sentence is the same number of
+     * characters whatever tokenizer produced it.</p>
+     */
+    public long characters() {
+        return characters;
+    }
+
+    /**
+     * How many characters one run of generated text is.
+     *
+     * <p>The unit that survives a change of model: a tokenizer decides how many tokens a sentence
+     * is, but not how many characters ({@code GenerationRateOnTheStatusPage_260915_oo01}).</p>
+     *
+     * <p>Counted off the UTF-8 bytes without decoding them: every character is one leading byte
+     * followed by its continuation bytes. A JSON escape is one character too -- {@code \n} is two
+     * bytes and {@code \u3042} is six.</p>
+     */
+    private static long charactersIn(byte[] text, int from, int to) {
+        long count = 0;
+        int i = from;
+        while (i < to) {
+            if (text[i] == '\\') {
+                i += i + 1 < to && text[i + 1] == 'u' ? 6 : 2;
+                count++;
+                continue;
+            }
+            if ((text[i] & 0xC0) != 0x80) {
+                count++;
+            }
+            i++;
+        }
+        return count;
     }
 
     private static byte[] concat(byte[] head, byte[] tail) {

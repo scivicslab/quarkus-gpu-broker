@@ -146,7 +146,9 @@ final class StatusPageRenderer {
      *
      * <p>{@code tok/s} is the queue's own throughput -- what it produced per second of wall clock.
      * {@code per reply} is what one caller waiting sees, and is the smaller of the two whenever
-     * more than one reply was in flight.</p>
+     * more than one reply was in flight. {@code chars/s per reply} is that same speed in the unit
+     * that does not depend on the tokenizer, and so is the one to read when comparing two
+     * models.</p>
      */
     private static String generationRate(List<QueueBucket> buckets) {
         if (buckets.isEmpty()) {
@@ -159,6 +161,8 @@ final class StatusPageRenderer {
         return "<span>tok/s <b>" + oneDecimal(totals.tokensPerSecondOver(StatusHistoryStore.BUCKET_LENGTH))
                 + "</b> <small>total</small></span>"
                 + "<span><b>" + oneDecimal(totals.tokensPerSecondPerReply()) + "</b> <small>per reply</small></span>"
+                + "<span><b>" + oneDecimal(totals.charactersPerSecondPerReply())
+                + "</b> <small>chars/s per reply</small></span>"
                 + "<span>queued <b>" + (totals.meanQueuedMs() / 1000.0 >= 0.1
                         ? oneDecimal(totals.meanQueuedMs() / 1000.0) + "s" : "0s")
                 + "</b></span>";

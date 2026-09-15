@@ -15,7 +15,9 @@ package com.scivicslab.gpubroker.model;
  * @param firstMs    from being handed to a worker to the first generated text
  * @param decodeMs   from the first generated text to the last
  * @param tokens     events that carried generated text -- see {@code SseContentScanner.events}
+ * @param characters characters of generated text; the unit that survives a change of model
  */
 public record GenerationMeasurement(String queueName, String address,
-                                    long queuedMs, long firstMs, long decodeMs, long tokens) {
+                                    long queuedMs, long firstMs, long decodeMs,
+                                    long tokens, long characters) {
 }
