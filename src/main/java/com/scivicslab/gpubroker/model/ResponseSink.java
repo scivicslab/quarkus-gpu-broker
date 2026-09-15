@@ -39,6 +39,19 @@ public interface ResponseSink {
     /** One chunk of the AiServiceEndpoint's response body. */
     void emit(byte[] chunk);
 
+    /**
+     * Whether the relay should stop reading the upstream response and close it.
+     *
+     * <p>Asked after every {@link #emit}. A sink that watches what it is being given -- and finds
+     * the model repeating itself without end -- says so here, and closing the upstream connection
+     * is what actually ends the generation ({@code RunawayGenerationLimits_260915_oo01}).</p>
+     *
+     * <p>Default {@code false}: a sink that only forwards has nothing to judge.</p>
+     */
+    default boolean stopRequested() {
+        return false;
+    }
+
     /** The AiServiceEndpoint's response finished successfully. */
     void complete();
 

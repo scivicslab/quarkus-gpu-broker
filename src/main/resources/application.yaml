@@ -29,3 +29,23 @@
   broker:
     nodes:
       - 127.0.0.1
+
+# generation-limits: per-queue limits on one reply, keyed by queue name — see BrokerConfig and
+# RunawayGenerationLimits_260915_oo01. max-tokens is a ceiling: a client asking for less keeps its
+# own value, a client asking for more (or for nothing at all) is brought down to this.
+#
+# The values below are ceilings, not targets. They exist because a reply that names no max_tokens
+# ends only when the model stops or the context length runs out — gemma-4 carries 131,072 — and one
+# degenerate loop then holds a slot for half an hour.
+#
+# repetition-penalty and frequency-penalty are available per queue and deliberately unset: vLLM's
+# repetition_penalty counts tokens from the prompt as well as from the reply, so a task that
+# rewrites a document it was handed is pushed away from that document's own words.
+broker:
+  generation-limits:
+    "vllm-google-gemma-4-26B-A4B-it":
+      max-tokens: 8192
+    "vllm-Qwen-Qwen3.8-27B":
+      max-tokens: 8192
+    "vllm-Qwen2.5-14B-Instruct-AWQ":
+      max-tokens: 4096

@@ -3,6 +3,7 @@ package com.scivicslab.gpubroker.config;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.OptionalInt;
 
 import io.smallrye.config.ConfigMapping;
@@ -25,6 +26,45 @@ public interface BrokerConfig {
 
     /** Per host:port capability overrides/declarations, keyed by "host:port". Empty if unset. */
     Map<String, EndpointCapability> capabilities();
+
+    /**
+     * Per-queue limits on one reply's generation, keyed by queue name (e.g.
+     * {@code vllm-google-gemma-4-26B-A4B-it}). Empty if unset.
+     *
+     * <p>Keyed by queue rather than by host:port because these are properties of the model, not of
+     * the machine serving it: a context length of 131,072 belongs to {@code gemma-4}, and the two
+     * nodes that serve it must not be given different caps
+     * ({@code RunawayGenerationLimits_260915_oo01}).</p>
+     */
+    Map<String, QueueGenerationLimit> generationLimits();
+
+    interface QueueGenerationLimit {
+
+        /**
+         * The most tokens one reply may generate. Sent as {@code max_tokens}: added when the client
+         * asked for no cap, and lowered to this when the client asked for a larger one.
+         *
+         * <p>Without it a reply ends only when the model emits its end-of-reply token or the
+         * context length runs out, which is how one degenerate loop held a GPU for thirty
+         * minutes.</p>
+         */
+        OptionalInt maxTokens();
+
+        /**
+         * Sent as {@code repetition_penalty} when the client named none.
+         *
+         * <p>Left unset by default: vLLM's {@code repetition_penalty} penalises tokens that appear
+         * in the prompt as well as in the generated text, so a task that rewrites a document it was
+         * given is pushed away from the document's own words.</p>
+         */
+        OptionalDouble repetitionPenalty();
+
+        /**
+         * Sent as {@code frequency_penalty} when the client named none. Unlike
+         * {@link #repetitionPenalty}, this counts only what has been generated.
+         */
+        OptionalDouble frequencyPenalty();
+    }
 
     interface EndpointCapability {
 

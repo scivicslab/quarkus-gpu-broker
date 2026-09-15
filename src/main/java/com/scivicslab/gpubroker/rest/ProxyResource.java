@@ -4,10 +4,13 @@ import com.scivicslab.gpubroker.actor.AiServiceEndpointWorker;
 import com.scivicslab.gpubroker.actor.JobQueue;
 import com.scivicslab.gpubroker.boot.DrainingException;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
+import com.scivicslab.gpubroker.config.BrokerConfig;
+import com.scivicslab.gpubroker.config.LimitedRequestBody;
 import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
 import com.scivicslab.gpubroker.model.RequestBody;
 import com.scivicslab.gpubroker.model.ResponseSink;
+import com.scivicslab.gpubroker.response.RepetitionStoppingResponseSink;
 import com.scivicslab.gpubroker.response.StreamStart;
 import com.scivicslab.gpubroker.response.StreamingResponseSink;
 import com.scivicslab.pojoactor.core.ActorRef;
@@ -49,6 +52,9 @@ public class ProxyResource {
     @Inject
     ActorSystem system;
 
+    @Inject
+    BrokerConfig config;
+
     @POST
     public RestMulti<Buffer> submit(@PathParam("queueName") String queueName, byte[] rawBody,
                                      @HeaderParam("Content-Type") String contentType,
@@ -67,9 +73,16 @@ public class ProxyResource {
         }
 
         Priority priority = Priority.fromHeader(priorityHeader);
+        // Every chat request arrives here: OpenAiCompatResource resolves a queue name and delegates
+        // to this method, and a client that names the queue itself posts to it directly. It is
+        // therefore the one place a limit can be put that holds for every client
+        // (RunawayGenerationLimits_260915_oo01).
+        RequestBody request = LimitedRequestBody.of(new RequestBody(rawBody, contentType),
+                config.generationLimits().get(queueName));
         Uni<StreamStart> started = Uni.createFrom().emitter(emitter -> {
-            ResponseSink sink = new StreamingResponseSink(emitter);
-            Job job = Job.first(new RequestBody(rawBody, contentType), priority, sink);
+            ResponseSink sink = new RepetitionStoppingResponseSink(
+                    new StreamingResponseSink(emitter), queueName);
+            Job job = Job.first(request, priority, sink);
             // Non-blocking: this callback may run on the I/O thread, so we chain
             // onto the CompletableFuture instead of calling join() on it.
             queue.ask(q -> q.submit(job)).thenAccept(endpointId -> {

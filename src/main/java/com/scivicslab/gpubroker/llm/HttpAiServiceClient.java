@@ -68,6 +68,12 @@ public final class HttpAiServiceClient implements AiServiceClient {
         int read;
         while ((read = body.read(buffer)) != -1) {
             job.responseSink().emit(Arrays.copyOf(buffer, read));
+            if (job.responseSink().stopRequested()) {
+                // Returning closes the response body in the caller's try-with-resources, which
+                // ends the upstream generation. The job itself counts as complete: the client has
+                // already been given everything that was worth giving it.
+                return;
+            }
         }
     }
 }
