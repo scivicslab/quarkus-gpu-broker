@@ -35,8 +35,12 @@
 # own value, a client asking for more (or for nothing at all) is brought down to this.
 #
 # The values below are ceilings, not targets. They exist because a reply that names no max_tokens
-# ends only when the model stops or the context length runs out — gemma-4 carries 131,072 — and one
-# degenerate loop then holds a slot for half an hour.
+# ends only when the model stops or the context length runs out — gemma-4 carries 131,072 and
+# Cosmos3-Nano 262,144 — and one degenerate loop then holds a slot for half an hour.
+#
+# A queue is discovered by probing, so a model can appear here before anyone has written a ceiling
+# for it. An operator can add one without a rebuild:
+#   -Dbroker.generation-limits.\"vllm-<model>\".max-tokens=8192
 #
 # repetition-penalty and frequency-penalty are available per queue and deliberately unset: vLLM's
 # repetition_penalty counts tokens from the prompt as well as from the reply, so a task that
@@ -49,3 +53,5 @@ broker:
       max-tokens: 8192
     "vllm-Qwen2.5-14B-Instruct-AWQ":
       max-tokens: 4096
+    "vllm-nvidia-Cosmos3-Nano":
+      max-tokens: 8192
