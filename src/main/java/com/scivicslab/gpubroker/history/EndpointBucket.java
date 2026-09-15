@@ -11,7 +11,8 @@ import java.time.Instant;
  * address registered — see {@code StatusHistory_260905_oo01} "なぜ死活を
  * JobQueue の登録簿から読まないか".
  */
-public record EndpointBucket(String address, String queueName, Instant bucketStart, int probeOk, int probeTotal) {
+public record EndpointBucket(String address, String queueName, Instant bucketStart,
+                             int probeOk, int probeTotal, GenerationTotals generated) {
 
     /** How this bucket is painted on the liveness band. */
     public enum Health {
@@ -24,12 +25,18 @@ public record EndpointBucket(String address, String queueName, Instant bucketSta
     }
 
     public static EndpointBucket empty(String address, String queueName, Instant bucketStart) {
-        return new EndpointBucket(address, queueName, bucketStart, 0, 0);
+        return new EndpointBucket(address, queueName, bucketStart, 0, 0, GenerationTotals.NONE);
     }
 
     /** This bucket plus one more probe result. */
     public EndpointBucket plusProbe(boolean responded) {
-        return new EndpointBucket(address, queueName, bucketStart, probeOk + (responded ? 1 : 0), probeTotal + 1);
+        return new EndpointBucket(address, queueName, bucketStart,
+                probeOk + (responded ? 1 : 0), probeTotal + 1, generated);
+    }
+
+    /** This bucket plus one reply that has just ended on this address. */
+    public EndpointBucket plusGeneration(com.scivicslab.gpubroker.model.GenerationMeasurement one) {
+        return new EndpointBucket(address, queueName, bucketStart, probeOk, probeTotal, generated.plus(one));
     }
 
     /** Two records of the same ten-minute window, added together — see {@code QueueBucket.mergedWith}. */
@@ -38,7 +45,8 @@ public record EndpointBucket(String address, String queueName, Instant bucketSta
             throw new IllegalArgumentException("only the same address's same bucket can be merged");
         }
         return new EndpointBucket(address, queueName, bucketStart,
-                probeOk + other.probeOk(), probeTotal + other.probeTotal());
+                probeOk + other.probeOk(), probeTotal + other.probeTotal(),
+                generated.plus(other.generated()));
     }
 
     public Health health() {

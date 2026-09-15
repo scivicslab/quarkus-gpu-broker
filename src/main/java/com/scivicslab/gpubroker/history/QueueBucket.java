@@ -18,18 +18,24 @@ import java.time.Instant;
  */
 public record QueueBucket(String queueName, Instant bucketStart, int sampleCount,
                           long activeSum, long idleSum, long pendingSum,
-                          long completed, long failed) {
+                          long completed, long failed, GenerationTotals generated) {
 
     /** An empty bucket to start accumulating into. */
     public static QueueBucket empty(String queueName, Instant bucketStart) {
-        return new QueueBucket(queueName, bucketStart, 0, 0, 0, 0, 0, 0);
+        return new QueueBucket(queueName, bucketStart, 0, 0, 0, 0, 0, 0, GenerationTotals.NONE);
     }
 
     /** This bucket plus one more one-minute observation. */
     public QueueBucket plusSample(int active, int idle, int pending, long completedDelta, long failedDelta) {
         return new QueueBucket(queueName, bucketStart, sampleCount + 1,
                 activeSum + active, idleSum + idle, pendingSum + pending,
-                completed + completedDelta, failed + failedDelta);
+                completed + completedDelta, failed + failedDelta, generated);
+    }
+
+    /** This bucket plus one reply that has just ended on this queue. */
+    public QueueBucket plusGeneration(com.scivicslab.gpubroker.model.GenerationMeasurement one) {
+        return new QueueBucket(queueName, bucketStart, sampleCount, activeSum, idleSum, pendingSum,
+                completed, failed, generated.plus(one));
     }
 
     /**
@@ -43,7 +49,8 @@ public record QueueBucket(String queueName, Instant bucketStart, int sampleCount
         }
         return new QueueBucket(queueName, bucketStart, sampleCount + other.sampleCount(),
                 activeSum + other.activeSum(), idleSum + other.idleSum(), pendingSum + other.pendingSum(),
-                completed + other.completed(), failed + other.failed());
+                completed + other.completed(), failed + other.failed(),
+                generated.plus(other.generated()));
     }
 
     /** Slots attached to the queue during this bucket: busy ones plus free ones. */

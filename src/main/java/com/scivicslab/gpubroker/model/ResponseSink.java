@@ -33,6 +33,16 @@ public interface ResponseSink {
     default void dispatched() {
     }
 
+    /**
+     * Which {@code host:port} took the job, reported once, before the request goes out.
+     *
+     * <p>Not known when the sink is built: the queue picks the endpoint, and a job that fails on
+     * one is requeued onto another. Default no-op: only a sink that attributes what it measured to
+     * a machine needs it ({@code GenerationRateOnTheStatusPage_260915_oo01}).</p>
+     */
+    default void servedBy(String address) {
+    }
+
     /** The AiServiceEndpoint's real Content-Type, reported once, before any emit. */
     void start(String contentType);
 

@@ -10,6 +10,8 @@ import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
 import com.scivicslab.gpubroker.model.RequestBody;
 import com.scivicslab.gpubroker.model.ResponseSink;
+import com.scivicslab.gpubroker.history.StatusHistoryStore;
+import com.scivicslab.gpubroker.response.GenerationMeasuringResponseSink;
 import com.scivicslab.gpubroker.response.RepetitionStoppingResponseSink;
 import com.scivicslab.gpubroker.response.StreamStart;
 import com.scivicslab.gpubroker.response.StreamingResponseSink;
@@ -55,6 +57,9 @@ public class ProxyResource {
     @Inject
     BrokerConfig config;
 
+    @Inject
+    ActorRef<StatusHistoryStore> history;
+
     @POST
     public RestMulti<Buffer> submit(@PathParam("queueName") String queueName, byte[] rawBody,
                                      @HeaderParam("Content-Type") String contentType,
@@ -80,8 +85,10 @@ public class ProxyResource {
         RequestBody request = LimitedRequestBody.of(new RequestBody(rawBody, contentType),
                 config.generationLimits().get(queueName));
         Uni<StreamStart> started = Uni.createFrom().emitter(emitter -> {
-            ResponseSink sink = new RepetitionStoppingResponseSink(
-                    new StreamingResponseSink(emitter), queueName);
+            ResponseSink sink = new GenerationMeasuringResponseSink(
+                    new RepetitionStoppingResponseSink(new StreamingResponseSink(emitter), queueName),
+                    queueName,
+                    measured -> history.tell(h -> h.recordGeneration(java.time.Instant.now(), measured)));
             Job job = Job.first(request, priority, sink);
             // Non-blocking: this callback may run on the I/O thread, so we chain
             // onto the CompletableFuture instead of calling join() on it.

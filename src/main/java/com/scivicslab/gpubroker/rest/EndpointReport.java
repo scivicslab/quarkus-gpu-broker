@@ -15,16 +15,17 @@ import com.scivicslab.gpubroker.history.EndpointBucket;
  * with no observation at all — never absent for an address that has been probed, so a caller can
  * tell how stale (or how far in the past) one report is without a second request.
  */
-public record EndpointReport(String address, String health, int probeOk, int probeTotal, String bucketStart) {
+public record EndpointReport(String address, String health, int probeOk, int probeTotal, String bucketStart,
+                             GenerationRateReport generated) {
 
     /** An address the broker knows about but has never probed — no observation to report yet. */
     public static EndpointReport unprobed(String address) {
-        return new EndpointReport(address, "UNKNOWN", 0, 0, null);
+        return new EndpointReport(address, "UNKNOWN", 0, 0, null, GenerationRateReport.NONE);
     }
 
     public static EndpointReport of(EndpointBucket bucket) {
         return new EndpointReport(bucket.address(), bucket.health().name(), bucket.probeOk(), bucket.probeTotal(),
-                bucket.bucketStart().toString());
+                bucket.bucketStart().toString(), GenerationRateReport.of(bucket.generated()));
     }
 
     /** Whether this address answered at least one of the probes in its window. */

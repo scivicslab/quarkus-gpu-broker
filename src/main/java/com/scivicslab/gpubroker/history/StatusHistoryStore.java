@@ -24,6 +24,7 @@ import java.util.logging.Logger;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.scivicslab.gpubroker.model.GenerationMeasurement;
 import com.scivicslab.gpubroker.model.QueueStatus;
 
 /**
@@ -42,7 +43,7 @@ public class StatusHistoryStore {
 
     private static final Logger LOG = Logger.getLogger(StatusHistoryStore.class.getName());
 
-    static final Duration BUCKET_LENGTH = Duration.ofMinutes(10);
+    public static final Duration BUCKET_LENGTH = Duration.ofMinutes(10);
     static final Duration RETENTION = Duration.ofHours(24);
     /** Buckets shown on the history charts: 24 hours at ten minutes each. */
     public static final int BUCKETS_PER_DAY = (int) (RETENTION.toMinutes() / BUCKET_LENGTH.toMinutes());
@@ -105,6 +106,31 @@ public class StatusHistoryStore {
             accumulateEndpoint(probe);
         }
         pruneClosed(now);
+    }
+
+    /**
+     * Folds one finished reply into the open buckets -- its queue's and the address's.
+     *
+     * <p>Arrives whenever a reply ends, not on the one-minute observation clock, so it opens the
+     * window itself when it is the first thing to happen in one
+     * ({@code GenerationRateOnTheStatusPage_260915_oo01}).</p>
+     */
+    public void recordGeneration(Instant now, GenerationMeasurement one) {
+        Instant bucketStart = floorToBucket(now);
+        if (openBucketStart == null) {
+            openBucketStart = bucketStart;
+        } else if (!bucketStart.equals(openBucketStart)) {
+            closeOpenBuckets();
+            openBucketStart = bucketStart;
+        }
+        QueueBucket queue = openQueueBuckets.computeIfAbsent(one.queueName(),
+                name -> QueueBucket.empty(name, openBucketStart));
+        openQueueBuckets.put(one.queueName(), queue.plusGeneration(one));
+        if (one.address() != null) {
+            EndpointBucket endpoint = openEndpointBuckets.computeIfAbsent(one.address(),
+                    address -> EndpointBucket.empty(address, one.queueName(), openBucketStart));
+            openEndpointBuckets.put(one.address(), endpoint.plusGeneration(one));
+        }
     }
 
     private void accumulateQueue(QueueStatus status) {
@@ -316,13 +342,14 @@ public class StatusHistoryStore {
             QueueBucket restored = new QueueBucket(node.path("queue").asText(), bucketStart,
                     node.path("samples").asInt(), node.path("activeSum").asLong(),
                     node.path("idleSum").asLong(), node.path("pendingSum").asLong(),
-                    node.path("completed").asLong(), node.path("failed").asLong());
+                    node.path("completed").asLong(), node.path("failed").asLong(), generatedOf(node));
             Deque<QueueBucket> buckets = closedQueueBuckets.computeIfAbsent(restored.queueName(), n -> new ArrayDeque<>());
             QueueBucket sameWindow = removeSameWindow(buckets, restored.bucketStart(), QueueBucket::bucketStart);
             buckets.addLast(sameWindow == null ? restored : sameWindow.mergedWith(restored));
         } else {
             EndpointBucket restored = new EndpointBucket(node.path("address").asText(), node.path("queue").asText(),
-                    bucketStart, node.path("probeOk").asInt(), node.path("probeTotal").asInt());
+                    bucketStart, node.path("probeOk").asInt(), node.path("probeTotal").asInt(),
+                    generatedOf(node));
             Deque<EndpointBucket> buckets = closedEndpointBuckets.computeIfAbsent(restored.address(), a -> new ArrayDeque<>());
             EndpointBucket sameWindow = removeSameWindow(buckets, restored.bucketStart(), EndpointBucket::bucketStart);
             buckets.addLast(sameWindow == null ? restored : sameWindow.mergedWith(restored));
@@ -358,6 +385,7 @@ public class StatusHistoryStore {
         node.put("pendingSum", bucket.pendingSum());
         node.put("completed", bucket.completed());
         node.put("failed", bucket.failed());
+        putGenerated(node, bucket.generated());
         return node.toString();
     }
 
@@ -369,7 +397,23 @@ public class StatusHistoryStore {
         node.put("queue", bucket.queueName());
         node.put("probeOk", bucket.probeOk());
         node.put("probeTotal", bucket.probeTotal());
+        putGenerated(node, bucket.generated());
         return node.toString();
+    }
+
+    /** Written flat, so a file from before these existed reads back as zeroes rather than failing. */
+    private static void putGenerated(ObjectNode node, GenerationTotals totals) {
+        node.put("generations", totals.generations());
+        node.put("tokens", totals.tokens());
+        node.put("decodeMs", totals.decodeMs());
+        node.put("queuedMs", totals.queuedMs());
+        node.put("firstMs", totals.firstMs());
+    }
+
+    private static GenerationTotals generatedOf(JsonNode node) {
+        return new GenerationTotals(node.path("generations").asLong(), node.path("tokens").asLong(),
+                node.path("decodeMs").asLong(), node.path("queuedMs").asLong(),
+                node.path("firstMs").asLong());
     }
 
     private void append(List<String> lines) {

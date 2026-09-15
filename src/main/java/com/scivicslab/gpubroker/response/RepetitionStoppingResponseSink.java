@@ -41,14 +41,8 @@ public final class RepetitionStoppingResponseSink implements ResponseSink {
      */
     private static final double DISTINCT_SHARE = 0.25;
 
-    /** Where the generated text sits inside one streamed chunk. Matches {@code reasoning_content} too. */
-    private static final byte[] MARKER = "content\":\"".getBytes(StandardCharsets.US_ASCII);
-
     private static final byte[] CUT_OFF = ("data: {\"choices\":[{\"index\":0,\"delta\":{},"
             + "\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n").getBytes(StandardCharsets.UTF_8);
-
-    /** A response that is one JSON object rather than events never reaches a newline; do not hoard it. */
-    private static final int PENDING_LIMIT = 65536;
 
     private final ResponseSink delegate;
     private final String queueName;
@@ -58,7 +52,7 @@ public final class RepetitionStoppingResponseSink implements ResponseSink {
     private long taken;
     private int sinceJudged;
 
-    private byte[] pending = new byte[0];
+    private final SseContentScanner scanner = new SseContentScanner();
     private boolean events;
     private volatile boolean stop;
 
@@ -88,7 +82,7 @@ public final class RepetitionStoppingResponseSink implements ResponseSink {
         if (stop) {
             return;
         }
-        take(chunk);
+        scanner.feed(chunk, this::append);
         if (sinceJudged >= JUDGE_EVERY && taken >= WINDOW && repeating()) {
             stop = true;
             LOG.warning("Cut off a repeating reply on " + queueName + " after " + taken
@@ -112,35 +106,6 @@ public final class RepetitionStoppingResponseSink implements ResponseSink {
     @Override
     public void fail(Throwable cause) {
         delegate.fail(cause);
-    }
-
-    /** Keeps whole lines only, so a marker split across two chunks is read once it is complete. */
-    private void take(byte[] chunk) {
-        byte[] all = concat(pending, chunk);
-        int lastNewline = lastIndexOf(all, (byte) '\n');
-        if (lastNewline < 0) {
-            pending = all.length > PENDING_LIMIT ? new byte[0] : all;
-            return;
-        }
-        pending = Arrays.copyOfRange(all, lastNewline + 1, all.length);
-        takeGeneratedText(all, lastNewline + 1);
-    }
-
-    private void takeGeneratedText(byte[] lines, int end) {
-        int at = 0;
-        while (at < end) {
-            int marker = indexOf(lines, MARKER, at, end);
-            if (marker < 0) {
-                return;
-            }
-            int from = marker + MARKER.length;
-            int to = from;
-            while (to < end && lines[to] != '"') {
-                to += lines[to] == '\\' ? 2 : 1;
-            }
-            append(lines, from, Math.min(to, end));
-            at = Math.min(to, end) + 1;
-        }
     }
 
     private void append(byte[] source, int from, int to) {
@@ -197,34 +162,4 @@ public final class RepetitionStoppingResponseSink implements ResponseSink {
         return out;
     }
 
-    private static byte[] concat(byte[] head, byte[] tail) {
-        if (head.length == 0) {
-            return tail;
-        }
-        byte[] out = Arrays.copyOf(head, head.length + tail.length);
-        System.arraycopy(tail, 0, out, head.length, tail.length);
-        return out;
-    }
-
-    private static int lastIndexOf(byte[] haystack, byte needle) {
-        for (int i = haystack.length - 1; i >= 0; i--) {
-            if (haystack[i] == needle) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private static int indexOf(byte[] haystack, byte[] needle, int from, int end) {
-        outer:
-        for (int i = from; i <= end - needle.length; i++) {
-            for (int j = 0; j < needle.length; j++) {
-                if (haystack[i + j] != needle[j]) {
-                    continue outer;
-                }
-            }
-            return i;
-        }
-        return -1;
-    }
 }

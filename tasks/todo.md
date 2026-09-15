@@ -22,3 +22,20 @@
   `frequency_penalty` も knob として用意する。
 - 反復の検出は本文（`"content":"` の中身）のバイト列で行う。SSE の枠自体が反復的なので、
   枠込みで見ると必ず誤検出する。
+
+# 生成の速さを測る
+
+- [x] `GenerationMeasuringResponseSink` — 待ち時間・最初のトークンまで・復号時間・イベント数
+- [x] `SseContentScanner` — 反復を見るシンクと共有
+- [x] `ResponseSink.servedBy` — どの機械が処理したか（シンクを作る時点では未定）
+- [x] `GenerationTotals` を `QueueBucket` / `EndpointBucket` に
+- [x] `StatusHistoryStore.recordGeneration`、履歴ファイルは後方互換（古い行は 0 で読む）
+- [x] `GET /queues` の `generated`、状態ページの tok/s
+- [x] テスト 10 本、137 緑
+
+## 決めたこと
+
+- 率ではなく和を持つ。知りたい 2 つの率（1 本あたり / 合計）が同じ和の別の割り算。
+- トークン数は content つきイベントの数。近似だが、プロトコルを変えない。正確に取るなら
+  `stream_options.include_usage`。切り替える場所は `max_tokens` と同じ 1 箇所。
+- 1 件も終わっていない窓には出さない。使われていないキューが 0 tok/s と読めるのを避ける。

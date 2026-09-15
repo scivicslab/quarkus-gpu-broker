@@ -5,6 +5,7 @@ import java.util.Map;
 
 import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.history.EndpointBucket;
+import com.scivicslab.gpubroker.history.GenerationTotals;
 import com.scivicslab.gpubroker.history.QueueBucket;
 import com.scivicslab.gpubroker.history.StatusHistoryStore;
 import com.scivicslab.gpubroker.history.StatusHistoryStore.QueueHistorySnapshot;
@@ -120,6 +121,7 @@ final class StatusPageRenderer {
                 .append(metric("idle", "--idle", s.idleCount(), "slots"))
                 .append("<span>wait <b>").append(estimatedWait(s.pendingCount(), completedLastHour)).append("</b></span>")
                 .append("<span>done <b>").append(completedLastHour).append("</b> <small>jobs/h</small></span>")
+                .append(generationRate(buckets))
                 .append("</span></div>");
 
         appendCurrentBar(card, s);
@@ -137,6 +139,35 @@ final class StatusPageRenderer {
      * JobQueue}'s deque — without the unit on the page, a reader has to already know which of
      * the three is which.
      */
+    /**
+     * The two rates of the window still filling, and the wait in front of it. Shown only once a
+     * reply has actually ended in that window: a queue nobody is using would otherwise read as a
+     * queue answering at zero tokens a second ({@code GenerationRateOnTheStatusPage_260915_oo01}).
+     *
+     * <p>{@code tok/s} is the queue's own throughput -- what it produced per second of wall clock.
+     * {@code per reply} is what one caller waiting sees, and is the smaller of the two whenever
+     * more than one reply was in flight.</p>
+     */
+    private static String generationRate(List<QueueBucket> buckets) {
+        if (buckets.isEmpty()) {
+            return "";
+        }
+        GenerationTotals totals = buckets.get(buckets.size() - 1).generated();
+        if (totals.generations() == 0) {
+            return "";
+        }
+        return "<span>tok/s <b>" + oneDecimal(totals.tokensPerSecondOver(StatusHistoryStore.BUCKET_LENGTH))
+                + "</b> <small>total</small></span>"
+                + "<span><b>" + oneDecimal(totals.tokensPerSecondPerReply()) + "</b> <small>per reply</small></span>"
+                + "<span>queued <b>" + (totals.meanQueuedMs() / 1000.0 >= 0.1
+                        ? oneDecimal(totals.meanQueuedMs() / 1000.0) + "s" : "0s")
+                + "</b></span>";
+    }
+
+    private static String oneDecimal(double value) {
+        return String.format(java.util.Locale.ROOT, "%.1f", value);
+    }
+
     private static String metric(String label, String colorVar, int count, String unit) {
         return "<span><i class=\"swatch\" style=\"background:var(" + colorVar + ")\"></i>"
                 + label + " <b>" + count + "</b> <small>" + unit + "</small></span>";

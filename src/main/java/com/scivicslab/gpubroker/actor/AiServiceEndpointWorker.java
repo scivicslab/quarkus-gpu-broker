@@ -63,6 +63,7 @@ public final class AiServiceEndpointWorker {
     public void assign(Job job) {
         boolean succeeded = true;
         try {
+            job.responseSink().servedBy(address);     // whatever measures this job now knows where it ran
             client.send(address, requestPath, job);   // this actor's own virtual thread waits for completion
         } catch (AiServiceCallException e) {
             succeeded = false;

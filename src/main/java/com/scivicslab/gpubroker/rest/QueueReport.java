@@ -29,7 +29,7 @@ import com.scivicslab.gpubroker.model.QueueStatus;
  */
 public record QueueReport(String name, int activeSlots, int idleSlots, int totalSlots,
                           int pendingJobs, long completedLastHour, boolean ready,
-                          List<EndpointReport> endpoints) {
+                          GenerationRateReport generated, List<EndpointReport> endpoints) {
 
     public static QueueReport of(QueueStatus status, QueueHistorySnapshot snapshot) {
         return of(status, snapshot, null);
@@ -61,9 +61,13 @@ public record QueueReport(String name, int activeSlots, int idleSlots, int total
             }
         }
         int total = now.activeCount() + now.idleCount();
+        List<com.scivicslab.gpubroker.history.QueueBucket> queueBuckets = snapshot.queueBuckets();
+        GenerationRateReport generated = queueBuckets.isEmpty()
+                ? GenerationRateReport.NONE
+                : GenerationRateReport.of(queueBuckets.get(queueBuckets.size() - 1).generated());
         return new QueueReport(status.queueName(), now.activeCount(), now.idleCount(), total,
                 now.pendingCount(), snapshot.completedLastHour(),
-                isReady(total, endpoints), List.copyOf(endpoints));
+                isReady(total, endpoints), generated, List.copyOf(endpoints));
     }
 
     /**
