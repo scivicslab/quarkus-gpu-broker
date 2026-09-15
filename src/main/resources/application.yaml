@@ -47,6 +47,10 @@
 # rewrites a document it was handed is pushed away from that document's own words.
 broker:
   generation-limits:
+    # Stands for every queue that has no entry of its own, so a model that appears between two
+    # readings of this file is not left without a ceiling. An entry of its own replaces this one.
+    "*":
+      max-tokens: 8192
     "vllm-google-gemma-4-26B-A4B-it":
       max-tokens: 8192
     "vllm-Qwen-Qwen3.8-27B":

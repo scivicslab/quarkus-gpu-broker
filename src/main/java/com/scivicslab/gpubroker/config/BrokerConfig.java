@@ -38,6 +38,27 @@ public interface BrokerConfig {
      */
     Map<String, QueueGenerationLimit> generationLimits();
 
+    /** The key an entry uses to stand for every queue that has no entry of its own. */
+    String ANY_QUEUE = "*";
+
+    /**
+     * This queue's limits: its own entry, or the one written under {@link #ANY_QUEUE} when it has
+     * none. {@code null} when neither exists.
+     *
+     * <p>A queue is discovered by probing and a limit is written by hand, so a model can be serving
+     * traffic before anyone has given it a ceiling -- which is how {@code Cosmos3-Nano} appeared
+     * carrying a context length of 262,144 and no limit at all. The default is what covers the gap
+     * between a model appearing and someone noticing it.</p>
+     *
+     * <p>An entry of its own replaces the default rather than being merged into it: a queue that
+     * names one field and inherits another would make the effective limit something a reader has
+     * to assemble from two places.</p>
+     */
+    default QueueGenerationLimit generationLimitFor(String queueName) {
+        QueueGenerationLimit own = generationLimits().get(queueName);
+        return own != null ? own : generationLimits().get(ANY_QUEUE);
+    }
+
     interface QueueGenerationLimit {
 
         /**

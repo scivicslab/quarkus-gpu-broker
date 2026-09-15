@@ -14,8 +14,10 @@ import com.scivicslab.gpubroker.model.RequestBody;
  * they are several programs written by several people, and only this one point is common to all of
  * them.</p>
  *
- * <p>Anything that is not a JSON object is returned untouched, so the OCR and embedding paths --
- * which post multipart bodies -- are unaffected.</p>
+ * <p>Only a chat request is touched -- one that carries {@code messages}. Embedding requests reach
+ * a queue through this same method and carry {@code input} instead; {@code max_tokens} means
+ * nothing there, and a server is entitled to refuse a field it does not know. Anything that is not
+ * a JSON object at all is returned untouched too, which covers the OCR paths' multipart bodies.</p>
  */
 public final class LimitedRequestBody {
 
@@ -43,6 +45,9 @@ public final class LimitedRequestBody {
                 return body;
             }
             ObjectNode object = (ObjectNode) root;
+            if (!object.has("messages")) {
+                return body;
+            }
             boolean changed = capTokens(object, limit);
             changed |= fillIfAbsent(object, "repetition_penalty", limit.repetitionPenalty());
             changed |= fillIfAbsent(object, "frequency_penalty", limit.frequencyPenalty());

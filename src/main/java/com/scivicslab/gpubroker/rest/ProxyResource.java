@@ -83,7 +83,7 @@ public class ProxyResource {
         // therefore the one place a limit can be put that holds for every client
         // (RunawayGenerationLimits_260915_oo01).
         RequestBody request = LimitedRequestBody.of(new RequestBody(rawBody, contentType),
-                config.generationLimits().get(queueName));
+                config.generationLimitFor(queueName));
         Uni<StreamStart> started = Uni.createFrom().emitter(emitter -> {
             ResponseSink sink = new GenerationMeasuringResponseSink(
                     new RepetitionStoppingResponseSink(new StreamingResponseSink(emitter), queueName),

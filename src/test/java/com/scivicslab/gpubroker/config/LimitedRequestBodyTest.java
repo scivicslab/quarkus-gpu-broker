@@ -46,20 +46,28 @@ class LimitedRequestBodyTest {
     @Test
     void of_clientAskedForMore_isBroughtDown() throws Exception {
         RequestBody out = LimitedRequestBody.of(
-                json("{\"model\":\"m\",\"max_tokens\":100000}"), Limit.ofMaxTokens(8192));
+                json("{\"model\":\"m\",\"messages\":[],\"max_tokens\":100000}"), Limit.ofMaxTokens(8192));
         assertEquals(8192, read(out).get("max_tokens").asInt());
     }
 
     @Test
     void of_clientAskedForLess_keepsItsOwnValue() {
-        RequestBody body = json("{\"model\":\"m\",\"max_tokens\":256}");
+        RequestBody body = json("{\"model\":\"m\",\"messages\":[],\"max_tokens\":256}");
         assertSame(body, LimitedRequestBody.of(body, Limit.ofMaxTokens(8192)));
     }
 
     @Test
     void of_queueWithNoLimit_isForwardedVerbatim() {
-        RequestBody body = json("{\"model\":\"m\"}");
+        RequestBody body = json("{\"model\":\"m\",\"messages\":[]}");
         assertSame(body, LimitedRequestBody.of(body, null));
+    }
+
+    @Test
+    void of_anEmbeddingRequest_isForwardedVerbatim() {
+        // Embeddings reach a queue through the same method. max_tokens means nothing there, and a
+        // server is entitled to refuse a field it does not know.
+        RequestBody body = json("{\"model\":\"e5\",\"input\":[\"one sentence\"]}");
+        assertSame(body, LimitedRequestBody.of(body, Limit.ofMaxTokens(8192)));
     }
 
     @Test
@@ -74,7 +82,7 @@ class LimitedRequestBodyTest {
     void of_penalties_areAddedOnlyWhenTheClientNamedNone() throws Exception {
         Limit limit = new Limit(OptionalInt.empty(), OptionalDouble.of(1.05), OptionalDouble.of(0.1));
         RequestBody out = LimitedRequestBody.of(
-                json("{\"model\":\"m\",\"repetition_penalty\":1.5}"), limit);
+                json("{\"model\":\"m\",\"messages\":[],\"repetition_penalty\":1.5}"), limit);
         JsonNode body = read(out);
         assertEquals(1.5, body.get("repetition_penalty").asDouble(), 1e-9);
         assertEquals(0.1, body.get("frequency_penalty").asDouble(), 1e-9);
@@ -82,7 +90,7 @@ class LimitedRequestBodyTest {
 
     @Test
     void of_everythingAlreadyWithinTheLimits_returnsTheSameBody() throws Exception {
-        RequestBody body = json("{\"model\":\"m\",\"max_tokens\":8192}");
+        RequestBody body = json("{\"model\":\"m\",\"messages\":[],\"max_tokens\":8192}");
         RequestBody out = LimitedRequestBody.of(body, Limit.ofMaxTokens(8192));
         assertSame(body, out);
         assertTrue(read(out).has("max_tokens"));
