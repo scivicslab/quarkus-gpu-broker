@@ -35,6 +35,8 @@ public final class AiServiceEndpointWorker {
     private final String requestPath;
     private ActorSystem system;
     private ActorRef<AiServiceEndpointWorker> self;
+    /** Where the outcome of each job is reported; null when nothing is keeping a record. */
+    private ActorRef<com.scivicslab.gpubroker.history.StatusHistoryStore> history;
 
     public AiServiceEndpointWorker(String queueName, String address, AiServiceClient client, String requestPath) {
         this.queueName = queueName;
@@ -47,6 +49,15 @@ public final class AiServiceEndpointWorker {
     public void bind(ActorSystem system, ActorRef<AiServiceEndpointWorker> self) {
         this.system = system;
         this.self = self;
+    }
+
+    /**
+     * @param history told whether each job ran, so liveness is measured by the work rather than by
+     *                a probe standing in for it ({@code LivenessFromWorkNotOnlyProbes_260920_oo01});
+     *                null to keep no record
+     */
+    public void setHistory(ActorRef<com.scivicslab.gpubroker.history.StatusHistoryStore> history) {
+        this.history = history;
     }
 
     /** Enter rotation so the queue can hand this worker its first job. */
@@ -69,6 +80,7 @@ public final class AiServiceEndpointWorker {
             succeeded = false;
             requeue(job);
         }
+        reportOutcome(succeeded);
         boolean completed = succeeded;
         queue().tell(q -> {
             // Counted only on success: a failed call was handed to another endpoint by
@@ -81,6 +93,20 @@ public final class AiServiceEndpointWorker {
                 self.tell(w -> w.assign(next));
             }
         });
+    }
+
+    /**
+     * Says whether this address did the work. A 5xx or a refused connection is what
+     * {@code HttpAiServiceClient} raises on, so this is the same evidence the retry acts on --
+     * until now it was used to move the job and then thrown away.
+     */
+    private void reportOutcome(boolean ok) {
+        ActorRef<com.scivicslab.gpubroker.history.StatusHistoryStore> record = history;
+        if (record == null) {
+            return;
+        }
+        java.time.Instant now = java.time.Instant.now();
+        record.tell(h -> h.recordWork(now, address, queueName, ok));
     }
 
     /** Hand this worker to another use; stop receiving work. */

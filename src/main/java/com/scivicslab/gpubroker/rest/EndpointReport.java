@@ -23,6 +23,19 @@ public record EndpointReport(String address, String health, int probeOk, int pro
         return new EndpointReport(address, "UNKNOWN", 0, 0, null, GenerationRateReport.NONE);
     }
 
+    /**
+     * One address as it reads now: the last thing observed about it, whether that was the minute's
+     * probe or a job it just ran ({@code LivenessFromWorkNotOnlyProbes_260920_oo01}). Distinct from
+     * {@link #of(EndpointBucket)}, which says what a ten-minute window looked like.
+     */
+    public static EndpointReport now(com.scivicslab.gpubroker.history.Liveness latest, EndpointBucket bucket) {
+        return new EndpointReport(latest.address(), latest.health().name(),
+                bucket == null ? 0 : bucket.probeOk(), bucket == null ? 0 : bucket.probeTotal(),
+                latest.at().toString(),
+                GenerationRateReport.of(bucket == null ? com.scivicslab.gpubroker.history.GenerationTotals.NONE
+                        : bucket.generated()));
+    }
+
     public static EndpointReport of(EndpointBucket bucket) {
         return new EndpointReport(bucket.address(), bucket.health().name(), bucket.probeOk(), bucket.probeTotal(),
                 bucket.bucketStart().toString(), GenerationRateReport.of(bucket.generated()));

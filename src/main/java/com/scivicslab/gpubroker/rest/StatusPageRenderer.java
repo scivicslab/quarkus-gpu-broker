@@ -44,14 +44,19 @@ final class StatusPageRenderer {
                          Map<String, QueueHistorySnapshot> historyByQueue) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">")
-                .append("<meta http-equiv=\"refresh\" content=\"10\">")
+                // One minute, because that is how often the finest figure on the page can change.
+                // Reloading every ten seconds redrew the same numbers six times and made every
+                // figure look current (LivenessFromWorkNotOnlyProbes_260920_oo01).
+                .append("<meta http-equiv=\"refresh\" content=\"60\">")
                 .append("<title>gpu-broker status</title>")
                 .append("<link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\">")
                 .append(style())
                 .append("</head><body><header><h1>gpu-broker</h1>")
-                .append("<p class=\"sub\">the numbers below reload every 10s &middot; ")
-                .append("liveness is probed every minute &middot; the charts gain one step every 10 min, ")
-                .append("covering 24 hours</p>")
+                .append("<p class=\"sub\">three scales, and this page reloads on the finest of them: ")
+                .append("<b>now</b> &mdash; slots, queue and liveness, from the minute's probe and ")
+                .append("from every job that has just run &middot; ")
+                .append("<b>10 min</b> &mdash; tok/s and waiting time, over the window being filled &middot; ")
+                .append("<b>24 h</b> &mdash; the bands and charts, 144 windows of 10 min</p>")
                 .append("</header><main>");
 
         if (statuses.isEmpty()) {

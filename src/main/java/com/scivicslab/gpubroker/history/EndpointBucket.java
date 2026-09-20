@@ -12,7 +12,8 @@ import java.time.Instant;
  * JobQueue の登録簿から読まないか".
  */
 public record EndpointBucket(String address, String queueName, Instant bucketStart,
-                             int probeOk, int probeTotal, GenerationTotals generated) {
+                             int probeOk, int probeTotal,
+                             int workOk, int workFailed, GenerationTotals generated) {
 
     /** How this bucket is painted on the liveness band. */
     public enum Health {
@@ -25,18 +26,32 @@ public record EndpointBucket(String address, String queueName, Instant bucketSta
     }
 
     public static EndpointBucket empty(String address, String queueName, Instant bucketStart) {
-        return new EndpointBucket(address, queueName, bucketStart, 0, 0, GenerationTotals.NONE);
+        return new EndpointBucket(address, queueName, bucketStart, 0, 0, 0, 0, GenerationTotals.NONE);
     }
 
     /** This bucket plus one more probe result. */
     public EndpointBucket plusProbe(boolean responded) {
         return new EndpointBucket(address, queueName, bucketStart,
-                probeOk + (responded ? 1 : 0), probeTotal + 1, generated);
+                probeOk + (responded ? 1 : 0), probeTotal + 1, workOk, workFailed, generated);
     }
 
     /** This bucket plus one reply that has just ended on this address. */
     public EndpointBucket plusGeneration(com.scivicslab.gpubroker.model.GenerationMeasurement one) {
-        return new EndpointBucket(address, queueName, bucketStart, probeOk, probeTotal, generated.plus(one));
+        return new EndpointBucket(address, queueName, bucketStart, probeOk, probeTotal,
+                workOk, workFailed, generated.plus(one));
+    }
+
+    /**
+     * This bucket plus one job this address actually ran.
+     *
+     * <p>A probe asks whether the address answers; this is whether it did the work. YomiToku
+     * answered {@code GET /} with 200 for weeks while every {@code POST /ocr/markdown} returned a
+     * CUDA error, and the band said UP throughout
+     * ({@code LivenessFromWorkNotOnlyProbes_260920_oo01}).</p>
+     */
+    public EndpointBucket plusWork(boolean ok) {
+        return new EndpointBucket(address, queueName, bucketStart, probeOk, probeTotal,
+                workOk + (ok ? 1 : 0), workFailed + (ok ? 0 : 1), generated);
     }
 
     /** Two records of the same ten-minute window, added together — see {@code QueueBucket.mergedWith}. */
@@ -46,13 +61,22 @@ public record EndpointBucket(String address, String queueName, Instant bucketSta
         }
         return new EndpointBucket(address, queueName, bucketStart,
                 probeOk + other.probeOk(), probeTotal + other.probeTotal(),
+                workOk + other.workOk(), workFailed + other.workFailed(),
                 generated.plus(other.generated()));
     }
 
+    /**
+     * How this address looked over this window, from both what it answered and what it ran.
+     *
+     * <p>A job that failed on it is the strongest evidence there is: it is what the probe was
+     * standing in for. One such failure keeps the window off UP however many probes passed.</p>
+     */
     public Health health() {
-        if (probeTotal == 0 || probeOk == 0) {
+        boolean answered = probeTotal > 0 && probeOk > 0;
+        if (!answered && workOk == 0) {
             return Health.DOWN;
         }
-        return probeOk == probeTotal ? Health.UP : Health.PARTIAL;
+        boolean everyProbePassed = probeTotal == 0 || probeOk == probeTotal;
+        return everyProbePassed && workFailed == 0 ? Health.UP : Health.PARTIAL;
     }
 }

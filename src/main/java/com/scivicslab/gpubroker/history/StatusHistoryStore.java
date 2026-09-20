@@ -57,6 +57,10 @@ public class StatusHistoryStore {
     private final Map<String, Deque<EndpointBucket>> closedEndpointBuckets = new LinkedHashMap<>();
     /** queueName -> {completedTotal, failedTotal} as of the previous observation. */
     private final Map<String, long[]> previousTotals = new HashMap<>();
+    /** The finest scale: what was last observed about each address, by a probe or by a job. */
+    private final Map<String, Liveness> latest = new HashMap<>();
+    /** When the last round of probing ran, so a probe observation carries its own time. */
+    private Instant lastObservedAt = Instant.EPOCH;
 
     private Instant openBucketStart;
 
@@ -92,6 +96,7 @@ public class StatusHistoryStore {
      * {@code now} has crossed a ten-minute boundary.
      */
     public void record(Instant now, List<ProbeObservation> probes, List<QueueStatus> statuses) {
+        lastObservedAt = now;
         Instant bucketStart = floorToBucket(now);
         if (openBucketStart == null) {
             openBucketStart = bucketStart;
@@ -133,6 +138,37 @@ public class StatusHistoryStore {
         }
     }
 
+    /**
+     * Folds one job's outcome into the record: the address as it reads now, and the window it
+     * happened in ({@code LivenessFromWorkNotOnlyProbes_260920_oo01}).
+     *
+     * <p>Arrives whenever a job ends, not on the minute's clock, so it opens the window itself
+     * when it is the first thing to happen in one.</p>
+     *
+     * @param ok whether the job ran; {@code false} for a connection failure or a 5xx
+     */
+    public void recordWork(Instant now, String address, String queueName, boolean ok) {
+        if (address == null || address.isBlank()) {
+            return;
+        }
+        Instant bucketStart = floorToBucket(now);
+        if (openBucketStart == null) {
+            openBucketStart = bucketStart;
+        } else if (!bucketStart.equals(openBucketStart)) {
+            closeOpenBuckets();
+            openBucketStart = bucketStart;
+        }
+        EndpointBucket open = openEndpointBuckets.computeIfAbsent(address,
+                a -> EndpointBucket.empty(a, queueName, openBucketStart));
+        openEndpointBuckets.put(address, open.plusWork(ok));
+        latest.put(address, new Liveness(address, queueName, ok, Liveness.Source.WORK, now));
+    }
+
+    /** @return what was last observed about this address, or {@code null} when nothing was */
+    public Liveness latestOf(String address) {
+        return latest.get(address);
+    }
+
     private void accumulateQueue(QueueStatus status) {
         long[] previous = previousTotals.get(status.queueName());
         long completedDelta = 0;
@@ -158,6 +194,9 @@ public class StatusHistoryStore {
         EndpointBucket open = openEndpointBuckets.computeIfAbsent(probe.address(),
                 address -> EndpointBucket.empty(address, probe.queueName(), openBucketStart));
         openEndpointBuckets.put(probe.address(), open.plusProbe(probe.responded()));
+        latest.put(probe.address(),
+                new Liveness(probe.address(), probe.queueName(), probe.responded(),
+                        Liveness.Source.PROBE, lastObservedAt));
     }
 
     private void closeOpenBuckets() {
@@ -266,7 +305,12 @@ public class StatusHistoryStore {
         for (String address : addresses) {
             endpoints.put(address, endpointHistory(address));
         }
-        return new QueueHistorySnapshot(queueHistory(queueName), completedLastHour(queueName), endpoints);
+        Map<String, Liveness> now = new LinkedHashMap<>();
+        for (String address : addresses) {
+            Liveness one = latest.get(address);
+            if (one != null) now.put(address, one);
+        }
+        return new QueueHistorySnapshot(queueHistory(queueName), completedLastHour(queueName), endpoints, now);
     }
 
     /**
@@ -275,9 +319,11 @@ public class StatusHistoryStore {
      * @param queueBuckets       the queue's congestion/throughput history, oldest first
      * @param completedLastHour  jobs finished in the last hour, for the estimated-wait calculation
      * @param endpointHistories  each known address's liveness history, oldest first per address
+     * @param latest             what was last observed about each address, by a probe or by a job
      */
     public record QueueHistorySnapshot(List<QueueBucket> queueBuckets, long completedLastHour,
-                                       Map<String, List<EndpointBucket>> endpointHistories) {}
+                                       Map<String, List<EndpointBucket>> endpointHistories,
+                                       Map<String, Liveness> latest) {}
 
     /**
      * Jobs finished in the last hour for one queue — the denominator of the estimated wait
@@ -349,6 +395,7 @@ public class StatusHistoryStore {
         } else {
             EndpointBucket restored = new EndpointBucket(node.path("address").asText(), node.path("queue").asText(),
                     bucketStart, node.path("probeOk").asInt(), node.path("probeTotal").asInt(),
+                    node.path("workOk").asInt(), node.path("workFailed").asInt(),
                     generatedOf(node));
             Deque<EndpointBucket> buckets = closedEndpointBuckets.computeIfAbsent(restored.address(), a -> new ArrayDeque<>());
             EndpointBucket sameWindow = removeSameWindow(buckets, restored.bucketStart(), EndpointBucket::bucketStart);
@@ -397,6 +444,8 @@ public class StatusHistoryStore {
         node.put("queue", bucket.queueName());
         node.put("probeOk", bucket.probeOk());
         node.put("probeTotal", bucket.probeTotal());
+        node.put("workOk", bucket.workOk());
+        node.put("workFailed", bucket.workFailed());
         putGenerated(node, bucket.generated());
         return node.toString();
     }

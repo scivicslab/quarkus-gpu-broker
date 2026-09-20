@@ -122,11 +122,16 @@ class StatusPageRendererTest {
         assertFalse(html.contains("x<y"));
     }
 
+    /**
+     * One minute: the finest scale anything on the page moves on. Ten seconds redrew the same
+     * numbers six times and made every figure look current
+     * ({@code LivenessFromWorkNotOnlyProbes_260920_oo01}).
+     */
     @Test
-    void refreshesEveryTenSeconds() {
+    void reloadsOnTheFinestScaleAnythingMovesOn() {
         String html = StatusPageRenderer.render(List.of(), Map.of(), Map.of());
 
-        assertTrue(html.contains("<meta http-equiv=\"refresh\" content=\"10\">"));
+        assertTrue(html.contains("<meta http-equiv=\"refresh\" content=\"60\">"));
     }
 
     @Test
@@ -198,14 +203,18 @@ class StatusPageRendererTest {
         assertTrue(html.contains("50%"));
     }
 
-    /** The header has to say what changes when, since three different intervals are in play. */
+    /**
+     * Three scales are in play and a reader cannot tell which figure moves on which, so the header
+     * names all three.
+     */
     @Test
-    void headerNamesEachUpdateInterval() {
+    void headerNamesTheThreeScales() {
         String html = StatusPageRenderer.render(List.of(), Map.of(), Map.of());
 
-        assertTrue(html.contains("reload every 10s"));
-        assertTrue(html.contains("probed every minute"));
-        assertTrue(html.contains("one step every 10 min"));
+        assertTrue(html.contains("<b>now</b>"), "the layer that reloads");
+        assertTrue(html.contains("<b>10 min</b>"), "the window tok/s and waiting time cover");
+        assertTrue(html.contains("<b>24 h</b>"), "the span of the bands and charts");
+        assertTrue(html.contains("144 windows of 10 min"), "and how the longest is built from the middle one");
     }
 
     private static int countOccurrences(String haystack, String needle) {

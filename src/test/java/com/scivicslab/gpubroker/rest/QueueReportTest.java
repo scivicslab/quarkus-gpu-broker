@@ -11,6 +11,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import com.scivicslab.gpubroker.history.EndpointBucket;
 import com.scivicslab.gpubroker.history.ProbeObservation;
 import com.scivicslab.gpubroker.history.StatusHistoryStore;
 import com.scivicslab.gpubroker.history.StatusHistoryStore.QueueHistorySnapshot;
@@ -100,9 +101,13 @@ class QueueReportTest {
         assertTrue(report.ready());
     }
 
-    /** Answering some but not all probes of a window is reported as such, not flattened to up or down. */
+    /**
+     * The report of one address says what is true now, not what the last ten minutes averaged to:
+     * an address that answered and then stopped reads DOWN, while the window it is in stays PARTIAL
+     * for the band ({@code LivenessFromWorkNotOnlyProbes_260920_oo01}).
+     */
     @Test
-    void partialAnswers_areReportedAsPartial() {
+    void theCurrentHealthIsTheLastObservation_theWindowKeepsThePartial() {
         StatusHistoryStore history = new StatusHistoryStore(null);
         history.record(NOON, List.of(new ProbeObservation("a:1", "q", true)), List.of());
         history.record(NOON.plus(Duration.ofMinutes(1)),
@@ -111,9 +116,13 @@ class QueueReportTest {
 
         QueueReport report = QueueReport.of(status, snapshotOf(status, history));
 
-        assertEquals("PARTIAL", report.endpoints().get(0).health());
-        assertEquals(1, report.endpoints().get(0).probeOk());
+        assertEquals("DOWN", report.endpoints().get(0).health(),
+                "the last probe of the two did not answer");
+        assertEquals(1, report.endpoints().get(0).probeOk(), "the window still counts both");
         assertEquals(2, report.endpoints().get(0).probeTotal());
+        assertEquals(EndpointBucket.Health.PARTIAL,
+                history.endpointHistory("a:1").get(0).health(),
+                "and the window itself is neither up nor down");
         assertTrue(report.ready(), "answered at least one probe, so work can still be sent");
     }
 

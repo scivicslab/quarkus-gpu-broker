@@ -26,6 +26,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 @ApplicationScoped
 public class AiServiceEndpointBuilder {
 
+    /** Where each worker reports whether its job ran ({@code LivenessFromWorkNotOnlyProbes_260920_oo01}). */
+    @jakarta.inject.Inject
+    com.scivicslab.pojoactor.core.ActorRef<com.scivicslab.gpubroker.history.StatusHistoryStore> history;
+
     /**
      * @param info        the facts {@code EndpointProbe.survey} collected for this instance
      * @param requestPath the URL path real job requests go to, from the {@code EndpointProbe} that found it
@@ -36,6 +40,11 @@ public class AiServiceEndpointBuilder {
         return new AiServiceEndpoint(
                 info.address(),
                 info.maxConcurrency(),
-                () -> new AiServiceEndpointWorker(info.queueName(), info.address(), client, requestPath));
+                () -> {
+                    AiServiceEndpointWorker worker =
+                            new AiServiceEndpointWorker(info.queueName(), info.address(), client, requestPath);
+                    worker.setHistory(history);
+                    return worker;
+                });
     }
 }

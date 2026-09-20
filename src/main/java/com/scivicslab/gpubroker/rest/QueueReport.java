@@ -46,9 +46,12 @@ public record QueueReport(String name, int activeSlots, int idleSlots, int total
             String address = entry.getKey();
             List<EndpointBucket> observed = entry.getValue();
             if (since == null) {
-                endpoints.add(observed.isEmpty()
-                        ? EndpointReport.unprobed(address)
-                        : EndpointReport.of(observed.get(observed.size() - 1)));
+                // The finest of the three scales: what is true now, not what the last ten minutes
+                // averaged to (LivenessFromWorkNotOnlyProbes_260920_oo01).
+                com.scivicslab.gpubroker.history.Liveness latest = snapshot.latest().get(address);
+                EndpointBucket newest = observed.isEmpty() ? null : observed.get(observed.size() - 1);
+                endpoints.add(latest != null ? EndpointReport.now(latest, newest)
+                        : newest == null ? EndpointReport.unprobed(address) : EndpointReport.of(newest));
                 continue;
             }
             List<EndpointBucket> inRange = observed.stream()
