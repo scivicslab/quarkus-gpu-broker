@@ -42,6 +42,15 @@ final class StatusPageRenderer {
 
     static String render(List<QueueStatus> statuses, Map<String, BrokerConfig.EndpointCapability> capabilities,
                          Map<String, QueueHistorySnapshot> historyByQueue) {
+        return render(statuses, capabilities, historyByQueue, java.time.Instant.now());
+    }
+
+    /**
+     * @param now which ten-minute window is the one still being filled, and so which is the newest
+     *            one a rate may be read from ({@code GenerationRateWindowsAndLayout_260923_oo01})
+     */
+    static String render(List<QueueStatus> statuses, Map<String, BrokerConfig.EndpointCapability> capabilities,
+                         Map<String, QueueHistorySnapshot> historyByQueue, java.time.Instant now) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">")
                 // One minute, because that is how often the finest figure on the page can change.
@@ -52,18 +61,17 @@ final class StatusPageRenderer {
                 .append("<link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\">")
                 .append(style())
                 .append("</head><body><header><h1>gpu-broker</h1>")
-                .append("<p class=\"sub\">three scales, and this page reloads on the finest of them: ")
-                .append("<b>now</b> &mdash; slots, queue and liveness, from the minute's probe and ")
-                .append("from every job that has just run &middot; ")
-                .append("<b>10 min</b> &mdash; tok/s and waiting time, over the window being filled &middot; ")
-                .append("<b>24 h</b> &mdash; the bands and charts, 144 windows of 10 min</p>")
+                .append("<p class=\"sub\">each row of figures names the window it covers, and every ")
+                .append("figure says what it is divided by when you hover it. The page reloads once ")
+                .append("a minute; the charts and bands below each card cover 24 h as 144 windows ")
+                .append("of 10 min.</p>")
                 .append("</header><main>");
 
         if (statuses.isEmpty()) {
             html.append("<p class=\"empty\">No queues discovered yet.</p>");
         }
         for (QueueStatus status : statuses) {
-            html.append(renderCard(status, capabilities, historyByQueue.get(status.queueName())));
+            html.append(renderCard(status, capabilities, historyByQueue.get(status.queueName()), now));
         }
 
         html.append("</main></body></html>");
@@ -85,10 +93,15 @@ final class StatusPageRenderer {
                 + ".card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1.1rem 1.3rem}"
                 + ".head{display:flex;align-items:baseline;gap:0.9rem;flex-wrap:wrap}"
                 + ".name{font-size:1.05rem;font-weight:600}"
-                + ".metrics{display:flex;gap:1.1rem;margin-left:auto;font-variant-numeric:tabular-nums;"
+                + ".metrics{display:flex;gap:1.1rem;flex-wrap:wrap;font-variant-numeric:tabular-nums;"
                 + "font-size:0.85rem;color:var(--muted)}"
                 + ".metrics b{font-weight:600;color:var(--ink)}"
                 + ".metrics small{font-size:0.85em;opacity:0.8}"
+                + ".metrics span[title]{cursor:help}"
+                + ".figurerows{display:flex;flex-direction:column;gap:0.3rem;margin-top:0.55rem}"
+                + ".figurerow{display:flex;align-items:baseline;gap:0.9rem;flex-wrap:wrap}"
+                + ".window{flex:0 0 7.5rem;font-size:0.72rem;letter-spacing:0.05em;"
+                + "text-transform:uppercase;color:var(--muted)}"
                 + ".swatch{display:inline-block;width:0.6em;height:0.6em;border-radius:2px;margin-right:0.35em}"
                 + ".now{display:flex;height:0.65rem;margin:0.7rem 0 0.2rem;background:var(--bg);"
                 + "border-radius:3px;overflow:hidden}"
@@ -113,21 +126,20 @@ final class StatusPageRenderer {
     }
 
     private static String renderCard(QueueStatus status, Map<String, BrokerConfig.EndpointCapability> capabilities,
-                                     QueueHistorySnapshot snapshot) {
+                                     QueueHistorySnapshot snapshot, java.time.Instant now) {
         QueueSnapshot s = status.snapshot();
         List<QueueBucket> buckets = snapshot.queueBuckets();
         long completedLastHour = snapshot.completedLastHour();
 
         StringBuilder card = new StringBuilder();
         card.append("<div class=\"card\"><div class=\"head\"><span class=\"name\">")
-                .append(escape(status.queueName())).append("</span><span class=\"metrics\">")
-                .append(metric("active", "--active", s.activeCount(), "slots"))
-                .append(metric("pending", "--pending", s.pendingCount(), "jobs"))
-                .append(metric("idle", "--idle", s.idleCount(), "slots"))
-                .append("<span>wait <b>").append(estimatedWait(s.pendingCount(), completedLastHour)).append("</b></span>")
-                .append("<span>done <b>").append(completedLastHour).append("</b> <small>jobs/h</small></span>")
-                .append(generationRate(buckets))
-                .append("</span></div>");
+                .append(escape(status.queueName())).append("</span></div>")
+                .append("<div class=\"figurerows\">")
+                .append(scaleRow("now", nowFigures(s, completedLastHour)))
+                .append(scaleRow("last 10 min", closedWindowFigures(buckets, now)))
+                .append(scaleRow("24 h peak — node", nodePeakFigures(buckets, now)))
+                .append(scaleRow("24 h peak — one caller", callerPeakFigures(buckets, now)))
+                .append("</div>");
 
         appendCurrentBar(card, s);
         appendQueueAndThroughputChart(card, buckets);
@@ -144,41 +156,152 @@ final class StatusPageRenderer {
      * JobQueue}'s deque — without the unit on the page, a reader has to already know which of
      * the three is which.
      */
+    /** One row of figures under the queue's name, labelled with the window it covers. */
+    private static String scaleRow(String window, String figures) {
+        if (figures.isEmpty()) {
+            return "";
+        }
+        return "<div class=\"figurerow\"><span class=\"window\">" + window + "</span>"
+                + "<span class=\"metrics\">" + figures + "</span></div>";
+    }
+
+    /** What is true at this instant: the slots, the queue in front of them, and how long it is. */
+    private static String nowFigures(QueueSnapshot s, long completedLastHour) {
+        return metric("active", "--active", s.activeCount(), "slots",
+                       "Workers generating a reply right now.")
+                + metric("pending", "--pending", s.pendingCount(), "jobs",
+                       "Jobs accepted but not yet handed to a worker.")
+                + metric("idle", "--idle", s.idleCount(), "slots",
+                       "Workers attached to this queue with nothing to do.")
+                + figure("wait", estimatedWait(s.pendingCount(), completedLastHour), "",
+                       "Estimated time before a job submitted now starts: "
+                       + "pending jobs divided by the jobs completed in the last hour.")
+                // Next to wait because it is wait's divisor, and on this row rather than the
+                // ten-minute one because it must not disappear with the rates: the unit carries
+                // its own window (GenerationRateWindowsAndLayout_260923_oo01).
+                + figure("done", Long.toString(completedLastHour), "jobs/h",
+                       "Jobs completed in the last hour — a one-hour window, which is why the "
+                       + "unit spells it out. This is the divisor behind wait.");
+    }
+
     /**
-     * The two rates of the window still filling, and the wait in front of it. Shown only once a
-     * reply has actually ended in that window: a queue nobody is using would otherwise read as a
-     * queue answering at zero tokens a second ({@code GenerationRateOnTheStatusPage_260915_oo01}).
+     * The rates of the newest ten-minute window that has closed.
      *
-     * <p>{@code tok/s} is the queue's own throughput -- what it produced per second of wall clock.
-     * {@code per reply} is what one caller waiting sees, and is the smaller of the two whenever
-     * more than one reply was in flight. {@code chars/s per reply} is that same speed in the unit
-     * that does not depend on the tokenizer, and so is the one to read when comparing two
-     * models.</p>
+     * <p>Nothing at all until one has closed — a window still being filled has no honest divisor
+     * ({@code GenerationRateWindowsAndLayout_260923_oo01}). Once one has, an em dash rather than
+     * {@code 0.0} whenever no reply ended in it: no reply to measure and a measured speed of zero
+     * are different states, and the page used to show the same {@code 0.0} for both.
      */
-    private static String generationRate(List<QueueBucket> buckets) {
-        if (buckets.isEmpty()) {
+    private static String closedWindowFigures(List<QueueBucket> buckets, java.time.Instant now) {
+        QueueBucket closed = GenerationWindows.lastClosed(buckets, now);
+        if (closed == null) {
             return "";
         }
-        GenerationTotals totals = buckets.get(buckets.size() - 1).generated();
-        if (totals.generations() == 0) {
+        GenerationTotals totals = closed.generated();
+        boolean measured = totals.generations() > 0;
+        String queued = !measured ? DASH
+                : totals.meanQueuedMs() / 1000.0 >= 0.1
+                        ? oneDecimal(totals.meanQueuedMs() / 1000.0) + "s" : "0s";
+        return figure("tok/s", measured
+                        ? rate(totals.tokensPerSecondOver(GenerationWindows.length())) : DASH,
+                       "total", "Tokens generated in that window divided by its 600 seconds. "
+                       + "Rises as the queue takes on more replies at once, until it stops rising "
+                       + "— that is where the capacity is.")
+                + figure("", measured ? rate(totals.tokensPerSecondPerReply()) : DASH,
+                       "per reply", "Tokens per second of a reply's own generation time, averaged "
+                       + "over the replies that ended in that window. This is what one caller "
+                       + "waiting sees, and it falls as the queue takes on more at once.")
+                + figure("", measured ? rate(totals.charactersPerSecondPerReply()) : DASH,
+                       "chars/s per reply", "The same per-reply speed counted in characters. "
+                       + "Tokenizers differ between models, characters do not, so this is the "
+                       + "figure to compare two models with.")
+                + figure("queued", queued, "",
+                       "Mean time a reply spent waiting for a worker before generation began.")
+                // Unlike the rates, zero here is a real reading: a window can pass with nothing
+                // generating. Only an unsampled window has no occupancy to report.
+                + figure("at", closed.sampleCount() == 0 ? DASH : oneDecimal(closed.activeAverage()),
+                       "slots busy",
+                       "Slots generating on average through that window. The per-reply figures to "
+                       + "the left were measured at this occupancy, and fall as it rises.");
+    }
+
+    /**
+     * What the deployment as a whole reached, over the closed windows still retained.
+     *
+     * <p>Kept apart from what one reply reached, because they are the two things a reader comes to
+     * this page for and they move in opposite directions: filling every slot is how the machine
+     * reaches its throughput and is also what makes one caller's reply slow.
+     */
+    private static String nodePeakFigures(List<QueueBucket> buckets, java.time.Instant now) {
+        GenerationWindows.Peaks peaks = GenerationWindows.peaks(buckets, now);
+        if (peaks.noNodeFigure()) {
             return "";
         }
-        return "<span>tok/s <b>" + oneDecimal(totals.tokensPerSecondOver(StatusHistoryStore.BUCKET_LENGTH))
-                + "</b> <small>total</small></span>"
-                + "<span><b>" + oneDecimal(totals.tokensPerSecondPerReply()) + "</b> <small>per reply</small></span>"
-                + "<span><b>" + oneDecimal(totals.charactersPerSecondPerReply())
-                + "</b> <small>chars/s per reply</small></span>"
-                + "<span>queued <b>" + (totals.meanQueuedMs() / 1000.0 >= 0.1
-                        ? oneDecimal(totals.meanQueuedMs() / 1000.0) + "s" : "0s")
-                + "</b></span>";
+        return figure("tok/s", rate(peaks.tokensPerSecondBestMinuteAtFullSlots()), "all slots busy",
+                       "Everything the queue produced in its busiest minute among the minutes the "
+                       + "observation found every slot generating. This is the deployment's "
+                       + "throughput as a machine: what the hardware is worth when it is fed.")
+                + figure("", rate(peaks.tokensPerSecondBestMinute()), "busiest 1 min",
+                       "The busiest minute whatever the occupancy. Equal to the figure on its "
+                       + "left when the peak happened to fall in a full minute, and lower when "
+                       + "the deployment was never filled.")
+                + figure("", rate(peaks.tokensPerSecondBestWindow()), "best 10 min",
+                       "The highest any single closed ten-minute window reached. Lower than the "
+                       + "best minute whenever the load came in bursts — this is what the queue "
+                       + "sustains, that is what it peaks at.");
+    }
+
+    /**
+     * What one reply achieved, at the two occupancies worth telling apart: a caller with the
+     * deployment to themselves, and a caller sharing it with every other slot.
+     */
+    private static String callerPeakFigures(List<QueueBucket> buckets, java.time.Instant now) {
+        GenerationWindows.Peaks peaks = GenerationWindows.peaks(buckets, now);
+        if (peaks.noCallerFigure()) {
+            return "";
+        }
+        return figure("tok/s", rate(peaks.tokensPerSecondOneReplyAlone()), "alone",
+                       "The fastest reply that had the whole queue to itself — nothing else "
+                       + "generating when it started or when it finished. What one person waiting "
+                       + "feels on an idle deployment, and the upper bound on that feeling.")
+                + figure("", rate(peaks.tokensPerSecondOneReplyAtFullSlots()), "all slots busy",
+                       "The fastest reply that ran with every slot generating at both ends of it. "
+                       + "What one person feels when the deployment is full. The gap from the "
+                       + "figure on its left is what sharing costs them.");
+    }
+
+    /** An em dash: the figure had nothing to measure, which is not the same as measuring zero. */
+    private static final String DASH = "&mdash;";
+
+    /** One labelled figure carrying its own definition, for the reader who hovers it. */
+    private static String figure(String label, String value, String unit, String title) {
+        return "<span title=\"" + escape(title) + "\">"
+                + (label.isEmpty() ? "" : label + " ")
+                + "<b>" + value + "</b>"
+                + (unit.isEmpty() ? "" : " <small>" + unit + "</small>")
+                + "</span>";
     }
 
     private static String oneDecimal(double value) {
         return String.format(java.util.Locale.ROOT, "%.1f", value);
     }
 
-    private static String metric(String label, String colorVar, int count, String unit) {
-        return "<span><i class=\"swatch\" style=\"background:var(" + colorVar + ")\"></i>"
+    /**
+     * A rate, with the two ways of being small kept apart: a queue that generated a handful of
+     * tokens in ten minutes is not a queue that generated none, and rounding both to {@code 0.0}
+     * was how the page said they were the same
+     * ({@code GenerationRateWindowsAndLayout_260923_oo01}).
+     */
+    private static String rate(double value) {
+        if (value <= 0) {
+            return DASH;
+        }
+        return value < 0.05 ? "&lt;0.1" : oneDecimal(value);
+    }
+
+    private static String metric(String label, String colorVar, int count, String unit, String title) {
+        return "<span title=\"" + escape(title) + "\">"
+                + "<i class=\"swatch\" style=\"background:var(" + colorVar + ")\"></i>"
                 + label + " <b>" + count + "</b> <small>" + unit + "</small></span>";
     }
 

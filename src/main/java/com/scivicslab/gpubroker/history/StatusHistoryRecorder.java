@@ -1,31 +1,23 @@
 package com.scivicslab.gpubroker.history;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import com.scivicslab.gpubroker.boot.EndpointPoller;
+import com.scivicslab.gpubroker.boot.EndpointSurveyor;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
-import com.scivicslab.gpubroker.config.BrokerConfig;
-import com.scivicslab.gpubroker.config.EndpointInfo;
 import com.scivicslab.gpubroker.config.EndpointProbe;
 import com.scivicslab.gpubroker.model.QueueStatus;
 import com.scivicslab.pojoactor.core.ActorRef;
 
 import io.quarkus.runtime.ShutdownEvent;
-import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.event.Observes;
-import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 
@@ -40,10 +32,11 @@ import jakarta.inject.Singleton;
  * endpoint that stopped answering while idle (see {@code
  * StatusHistory_260905_oo01}).
  *
- * <p>Probing only observes. It deliberately does not register an address
- * that answers but is absent from {@code JobQueue} — putting a recovered
- * node back into rotation changes where jobs go, which is a separate
- * decision from what the status page shows.
+ * <p>Recording only observes. Acting on the same reading — registering an address that answers
+ * but is absent from {@code JobQueue}, or moving one whose node now serves a different model —
+ * is a separate decision, made by {@code JobQueueRegistry.reconcile} before this class is called
+ * ({@code PeriodicRediscovery_260923_oo01}). The probing itself is shared: {@link EndpointPoller}
+ * surveys once a minute and hands the same result to both.
  */
 @Singleton
 public class StatusHistoryRecorder {
@@ -51,26 +44,23 @@ public class StatusHistoryRecorder {
     private static final Logger LOG = Logger.getLogger(StatusHistoryRecorder.class.getName());
 
     @Inject
-    Instance<EndpointProbe> knownProbeBeans;
-
-    @Inject
     JobQueueRegistry queues;
-
-    @Inject
-    BrokerConfig brokerConfig;
 
     @Inject
     ActorRef<StatusHistoryStore> store;
 
-    @Scheduled(every = "1m")
-    void observe() {
+    /**
+     * Writes one round's liveness and queue snapshots. Called by {@link EndpointPoller} with the
+     * survey it already ran, after {@code JobQueueRegistry.reconcile} has acted on it, so the
+     * registered set read here is the post-reconciliation one.
+     */
+    public void record(List<EndpointSurveyor.Found> found) {
         try {
             List<QueueStatus> statuses = queues.statusSnapshot();
-            List<ProbeObservation> probes = probeAll(statuses);
+            List<ProbeObservation> probes = probeAll(found, statuses);
             store.tell(s -> s.record(Instant.now(), probes, statuses));
         } catch (RuntimeException e) {
-            // A scheduled method that throws is retried but never recovers on its own;
-            // one failed round of observation must not stop later rounds.
+            // One failed round of observation must not stop later rounds.
             LOG.log(Level.SEVERE, "status history observation failed", e);
         }
     }
@@ -86,8 +76,9 @@ public class StatusHistoryRecorder {
      * answered any {@link EndpointProbe}, plus every address still registered in a {@code
      * JobQueue} — the latter answered nothing this round and is recorded as down.
      */
-    private List<ProbeObservation> probeAll(List<QueueStatus> statuses) {
-        Map<String, String> responding = surveyAll();
+    private List<ProbeObservation> probeAll(List<EndpointSurveyor.Found> found, List<QueueStatus> statuses) {
+        Map<String, String> responding = new LinkedHashMap<>();
+        found.forEach(f -> responding.put(f.info().address(), f.info().queueName()));
         Map<String, String> registered = registeredAddresses(statuses);
 
         Map<String, ProbeObservation> observations = new LinkedHashMap<>();
@@ -96,32 +87,6 @@ public class StatusHistoryRecorder {
         registered.forEach((address, queueName) ->
                 observations.computeIfAbsent(address, a -> new ProbeObservation(a, queueName, false)));
         return List.copyOf(observations.values());
-    }
-
-    /** {@code address} -> {@code queueName} for every endpoint that answered its probe. */
-    private Map<String, String> surveyAll() {
-        List<EndpointProbe> knownProbes = knownProbeBeans.stream().toList();
-        List<String> nodeIps = queues.expandNodeIps();
-        Map<String, BrokerConfig.EndpointCapability> capabilities = brokerConfig.capabilities();
-
-        Map<String, String> found = new HashMap<>();
-        try (ExecutorService kindSurveys = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<List<EndpointInfo>>> surveys = new ArrayList<>();
-            for (EndpointProbe probe : knownProbes) {
-                surveys.add(kindSurveys.submit(() -> probe.survey(nodeIps, capabilities)));
-            }
-            // (each kind's survey already probes its own addresses in parallel)
-            for (Future<List<EndpointInfo>> survey : surveys) {
-                for (EndpointInfo info : survey.get()) {
-                    found.put(info.address(), info.queueName());
-                }
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException e) {
-            LOG.log(Level.SEVERE, "endpoint survey failed during status history observation", e);
-        }
-        return found;
     }
 
     /**

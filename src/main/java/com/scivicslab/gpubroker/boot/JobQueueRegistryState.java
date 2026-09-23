@@ -22,6 +22,9 @@ public class JobQueueRegistryState {
 
     private final Map<String, ActorRef<JobQueue>> queues = new HashMap<>();
     private final Map<String, String> displayNames = new HashMap<>();
+    /** address -> the queue it is currently registered in, so a later survey can tell whether
+     *  that address moved to another model (see {@code PeriodicRediscovery_260923_oo01}). */
+    private final Map<String, String> endpointQueues = new HashMap<>();
     private boolean draining = false;
 
     /** One queue's registration outcome: the {@code JobQueue} actor, and whether it was just created. */
@@ -43,6 +46,36 @@ public class JobQueueRegistryState {
 
     public void putDisplayName(String queueName, String displayName) {
         displayNames.put(queueName, displayName);
+    }
+
+    /** Records that {@code address} now serves {@code queueName}. */
+    public void putEndpoint(String address, String queueName) {
+        endpointQueues.put(address, queueName);
+    }
+
+    /** Forgets {@code address}; returns the queue it was in, or null if it was not registered. */
+    public String removeEndpoint(String address) {
+        return endpointQueues.remove(address);
+    }
+
+    /** address -> queue name, for {@code JobQueueRegistry.reconcile}. */
+    public Map<String, String> endpointQueues() {
+        return Map.copyOf(endpointQueues);
+    }
+
+    /** Whether any address is still registered in {@code queueName}. */
+    public boolean hasEndpoints(String queueName) {
+        return endpointQueues.containsValue(queueName);
+    }
+
+    /**
+     * Stops advertising and resolving {@code queueName}. The {@code JobQueue} actor itself is left
+     * alone: a request thread may already hold its {@code ActorRef}, and an empty queue with no
+     * workers simply parks whatever reaches it (see {@code PeriodicRediscovery_260923_oo01}).
+     */
+    public void removeQueue(String queueName) {
+        queues.remove(queueName);
+        displayNames.remove(queueName);
     }
 
     public ActorRef<JobQueue> get(String queueName) {

@@ -2,13 +2,8 @@ package com.scivicslab.gpubroker.boot;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 import org.jboss.logging.Logger;
 
@@ -16,7 +11,6 @@ import com.scivicslab.gpubroker.actor.AiServiceEndpoint;
 import com.scivicslab.gpubroker.actor.AiServiceEndpointBuilder;
 import com.scivicslab.gpubroker.actor.JobQueue;
 import com.scivicslab.gpubroker.actor.ROOT;
-import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.config.EndpointInfo;
 import com.scivicslab.gpubroker.config.EndpointProbe;
 import com.scivicslab.gpubroker.model.Job;
@@ -27,7 +21,6 @@ import com.scivicslab.pojoactor.core.ActorSystem;
 import io.quarkus.runtime.ShutdownEvent;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.event.Observes;
-import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 
@@ -53,14 +46,8 @@ public class JobQueueRegistry {
     @Inject
     ActorSystem system;
 
-    // CDI has no plain "inject every bean implementing this interface as a List" — only
-    // Instance<T> (iterable) is standard. Converted to a List once per onStart, since the
-    // survey loop below needs indexed access to pair each probe with its own Future.
     @Inject
-    Instance<EndpointProbe> knownProbeBeans;
-
-    @Inject
-    BrokerConfig brokerConfig;
+    EndpointSurveyor surveyor;
 
     @Inject
     AiServiceEndpointBuilder builder;
@@ -68,44 +55,45 @@ public class JobQueueRegistry {
     @Inject
     ActorRef<JobQueueRegistryState> state;
 
-    void onStart(@Observes StartupEvent event) {
-        ActorRef<ROOT> root = system.actorOf("root", new ROOT());
-        List<EndpointProbe> knownProbes = knownProbeBeans.stream().toList();
-        List<String> expandedNodeIps = expandNodeIps();
-        Map<String, BrokerConfig.EndpointCapability> capabilities = brokerConfig.capabilities();
+    /** Kept past startup so {@link #reconcile} can hang new queues off the same root. */
+    private ActorRef<ROOT> root;
 
-        // Each EndpointProbe.survey already probes its own nodeIp x conventionalPort
-        // combinations in parallel; run the (few) known kinds' surveys in parallel too,
-        // so total startup time stays close to the single slowest kind, not their sum.
-        try (ExecutorService kindSurveys = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<List<EndpointInfo>>> surveys = new ArrayList<>();
-            for (EndpointProbe probe : knownProbes) {
-                surveys.add(kindSurveys.submit(() -> probe.survey(expandedNodeIps, capabilities)));
-            }
-            for (int i = 0; i < knownProbes.size(); i++) {
-                EndpointProbe probe = knownProbes.get(i);
-                for (EndpointInfo info : surveys.get(i).get()) {
-                    registerEndpoint(root, probe, info);
-                }
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException e) {
-            throw new IllegalStateException("endpoint survey failed unexpectedly", e);
+    /**
+     * Set once the startup survey has been registered. {@link #reconcile} does nothing until
+     * then: the first poll may fire while {@code onStart} is still in its loop, and an address
+     * registered by both would get a second {@code AiServiceEndpoint} whose {@code ActorRef}
+     * silently replaces the first in the {@code ActorSystem}.
+     */
+    private volatile boolean ready;
+
+    void onStart(@Observes StartupEvent event) {
+        root = system.actorOf("root", new ROOT());
+        for (EndpointSurveyor.Found found : surveyor.surveyNow()) {
+            registerEndpoint(found.probe(), found.info());
         }
+        ready = true;
     }
 
     /**
-     * Every node IP to probe, with each configured CIDR block expanded to its addresses.
-     * Public because {@code StatusHistoryRecorder} probes the same set once a minute and must
-     * not re-derive it — {@code CidrRange} stays package-private, with this as its one exit.
+     * Brings the registry in line with one round of probing: registers an address that answers
+     * but is not registered, and moves an address that now answers under a different queue name
+     * (its node's model was replaced). Leaves a registered address that answered nothing alone —
+     * a server that is merely restarting must not churn the actor tree.
+     *
+     * <p>Called once a minute by {@link EndpointPoller} with the same survey the status history
+     * is recorded from. See {@code PeriodicRediscovery_260923_oo01}.
      */
-    public List<String> expandNodeIps() {
-        List<String> expanded = new ArrayList<>();
-        for (String entry : brokerConfig.nodes().orElse(List.of())) {
-            expanded.addAll(CidrRange.expand(entry));
+    public void reconcile(List<EndpointSurveyor.Found> found) {
+        if (!ready || isDraining()) {
+            return;
         }
-        return expanded;
+        Map<String, String> registered = state.ask(JobQueueRegistryState::endpointQueues).join();
+        for (ReconcilePlan.Change change : ReconcilePlan.of(registered, found)) {
+            if (change.leavingQueue() != null) {
+                unregisterEndpoint(change.found().info().address(), change.leavingQueue());
+            }
+            registerEndpoint(change.found().probe(), change.found().info());
+        }
     }
 
     void onShutdown(@Observes ShutdownEvent event) {
@@ -139,7 +127,7 @@ public class JobQueueRegistry {
         return state.ask(JobQueueRegistryState::displayNames).join();
     }
 
-    private void registerEndpoint(ActorRef<ROOT> root, EndpointProbe probe, EndpointInfo info) {
+    private void registerEndpoint(EndpointProbe probe, EndpointInfo info) {
         JobQueueRegistryState.Registration registration = state.ask(s ->
                 s.registerQueue(info.queueName(), () -> root.createChild(info.queueName(), new JobQueue()))
         ).join();
@@ -153,8 +141,47 @@ public class JobQueueRegistry {
         ActorRef<AiServiceEndpoint> endpointRef = queue.createChild(info.address(), endpoint);
         endpointRef.tell(e -> e.bind(system, endpointRef));
         endpointRef.tell(AiServiceEndpoint::start);
+        state.tell(s -> s.putEndpoint(info.address(), info.queueName())).join();
         LOG.infof("discovered %s at %s -> queue %s (maxConcurrency=%d)",
                 probe.getClass().getSimpleName(), info.address(), info.queueName(), info.maxConcurrency());
+    }
+
+    /**
+     * Takes {@code address} out of {@code queueName}: withdraws each of its workers from the
+     * queue, closes their actors and the endpoint's, and drops the queue itself once it has no
+     * addresses left.
+     *
+     * <p>The workers are withdrawn by asking the queue directly rather than by telling each
+     * worker to detach itself: a worker in the middle of a job would process that message only
+     * after the job returned, and the job cannot return — the model that address served is gone.
+     * Closing interrupts that call, which fails the job into the normal retry path
+     * ({@code RetryLimit_260810_oo01}).
+     */
+    private void unregisterEndpoint(String address, String queueName) {
+        ActorRef<JobQueue> queue = state.ask(s -> s.get(queueName)).join();
+        ActorRef<AiServiceEndpoint> endpointRef = system.getActor(address);
+        if (endpointRef != null) {
+            List<String> workerNames = List.copyOf(endpointRef.getNamesOfChildren());
+            if (queue != null) {
+                for (String workerName : workerNames) {
+                    queue.tell(q -> q.withdraw(workerName)).join();
+                }
+            }
+            for (String workerName : workerNames) {
+                ActorRef<?> worker = system.getActor(workerName);
+                if (worker != null) {
+                    worker.close();
+                }
+            }
+            endpointRef.close();
+        }
+        state.tell(s -> s.removeEndpoint(address)).join();
+        boolean stillServed = state.ask(s -> s.hasEndpoints(queueName)).join();
+        if (!stillServed) {
+            state.tell(s -> s.removeQueue(queueName)).join();
+            LOG.infof("queue %s has no endpoints left; no longer advertised", queueName);
+        }
+        LOG.infof("withdrew %s from queue %s", address, queueName);
     }
 
     private void awaitIdle(Duration timeout, List<ActorRef<JobQueue>> allQueues) {

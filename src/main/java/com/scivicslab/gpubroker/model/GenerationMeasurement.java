@@ -16,8 +16,25 @@ package com.scivicslab.gpubroker.model;
  * @param decodeMs   from the first generated text to the last
  * @param tokens     events that carried generated text -- see {@code SseContentScanner.events}
  * @param characters characters of generated text; the unit that survives a change of model
+ * @param ranAlone   whether this was the only reply generating on the queue, at both the moment it
+ *                   was handed to a worker and the moment that worker finished with it. The speed
+ *                   of a reply that had the deployment to itself is a different quantity from the
+ *                   speed of one that shared it, and reporting the faster of the two as though
+ *                   they were comparable is what this flag exists to prevent
+ *                   ({@code GenerationRateWindowsAndLayout_260923_oo01})
+ * @param ranAtFullSlots whether every attached slot was generating, at both of those moments
  */
 public record GenerationMeasurement(String queueName, String address,
                                     long queuedMs, long firstMs, long decodeMs,
-                                    long tokens, long characters) {
+                                    long tokens, long characters,
+                                    boolean ranAlone, boolean ranAtFullSlots) {
+
+    /**
+     * A measurement taken where the queue's occupancy was never reported. It counts in every sum
+     * and in neither per-reply peak, which is what an unknown occupancy has to mean.
+     */
+    public GenerationMeasurement(String queueName, String address, long queuedMs, long firstMs,
+                                 long decodeMs, long tokens, long characters) {
+        this(queueName, address, queuedMs, firstMs, decodeMs, tokens, characters, false, false);
+    }
 }

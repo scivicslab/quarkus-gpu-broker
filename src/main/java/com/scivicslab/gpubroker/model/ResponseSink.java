@@ -40,6 +40,20 @@ public interface ResponseSink {
      * one is requeued onto another. Default no-op: only a sink that attributes what it measured to
      * a machine needs it ({@code GenerationRateOnTheStatusPage_260915_oo01}).</p>
      */
+    /**
+     * How busy the queue was, told twice: once as this job is handed to a worker and once as that
+     * worker finishes with it. What one reply achieved means different things when it had the
+     * deployment to itself and when every slot was generating
+     * ({@code GenerationRateWindowsAndLayout_260923_oo01}).
+     *
+     * <p>Default is to ignore it: only the sink that measures generation has any use for it.</p>
+     *
+     * @param busy  slots generating, this job's own included
+     * @param total slots attached to the queue
+     */
+    default void slotsInUse(int busy, int total) {
+    }
+
     default void servedBy(String address) {
     }
 

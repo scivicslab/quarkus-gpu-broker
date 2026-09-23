@@ -88,6 +88,10 @@ public final class AiServiceEndpointWorker {
             if (completed) {
                 q.recordCompleted();
             }
+            // Told again before this worker is offered more work, so the count still includes it:
+            // a reply is only credited as having run alone, or under full slots, when both ends
+            // of it agree (GenerationRateWindowsAndLayout_260923_oo01).
+            job.responseSink().slotsInUse(q.busySlots(), q.totalSlots());
             Job next = q.requestWork(self.getName());
             if (next != null) {
                 self.tell(w -> w.assign(next));

@@ -53,6 +53,9 @@ public class StatusHistoryStore {
 
     private final Map<String, QueueBucket> openQueueBuckets = new LinkedHashMap<>();
     private final Map<String, EndpointBucket> openEndpointBuckets = new LinkedHashMap<>();
+    /** Per-minute tallies for the window being filled, thrown away when it closes. */
+    private final Map<String, MinuteTally> openQueueMinutes = new LinkedHashMap<>();
+    private final Map<String, MinuteTally> openEndpointMinutes = new LinkedHashMap<>();
     private final Map<String, Deque<QueueBucket>> closedQueueBuckets = new LinkedHashMap<>();
     private final Map<String, Deque<EndpointBucket>> closedEndpointBuckets = new LinkedHashMap<>();
     /** queueName -> {completedTotal, failedTotal} as of the previous observation. */
@@ -106,6 +109,8 @@ public class StatusHistoryStore {
         }
         for (QueueStatus status : statuses) {
             accumulateQueue(status);
+            minutesOf(status.queueName()).observe(now, status.snapshot().activeCount(),
+                    status.snapshot().activeCount() + status.snapshot().idleCount());
         }
         for (ProbeObservation probe : probes) {
             accumulateEndpoint(probe);
@@ -131,10 +136,13 @@ public class StatusHistoryStore {
         QueueBucket queue = openQueueBuckets.computeIfAbsent(one.queueName(),
                 name -> QueueBucket.empty(name, openBucketStart));
         openQueueBuckets.put(one.queueName(), queue.plusGeneration(one));
+        minutesOf(one.queueName()).add(now, one);
         if (one.address() != null) {
             EndpointBucket endpoint = openEndpointBuckets.computeIfAbsent(one.address(),
                     address -> EndpointBucket.empty(address, one.queueName(), openBucketStart));
             openEndpointBuckets.put(one.address(), endpoint.plusGeneration(one));
+            openEndpointMinutes.computeIfAbsent(one.address(), a -> new MinuteTally(openBucketStart))
+                    .add(now, one);
         }
     }
 
@@ -202,16 +210,36 @@ public class StatusHistoryStore {
     private void closeOpenBuckets() {
         List<String> lines = new ArrayList<>();
         for (QueueBucket bucket : openQueueBuckets.values()) {
-            closedQueueBuckets.computeIfAbsent(bucket.queueName(), n -> new ArrayDeque<>()).addLast(bucket);
-            lines.add(toLine(bucket));
+            QueueBucket closed = withMinutePeaks(bucket, openQueueMinutes.get(bucket.queueName()));
+            closedQueueBuckets.computeIfAbsent(closed.queueName(), n -> new ArrayDeque<>()).addLast(closed);
+            lines.add(toLine(closed));
         }
         for (EndpointBucket bucket : openEndpointBuckets.values()) {
-            closedEndpointBuckets.computeIfAbsent(bucket.address(), a -> new ArrayDeque<>()).addLast(bucket);
-            lines.add(toLine(bucket));
+            MinuteTally tally = openEndpointMinutes.get(bucket.address());
+            // No per-address occupancy is observed, so an endpoint's at-full-slots peak stays 0.
+            EndpointBucket closed = tally == null ? bucket
+                    : bucket.withMinutePeaks(tally.peakTokensPerSecond(),
+                            tally.peakTokensPerSecondAtFullSlots(), tally.peakCharactersPerSecond());
+            closedEndpointBuckets.computeIfAbsent(closed.address(), a -> new ArrayDeque<>()).addLast(closed);
+            lines.add(toLine(closed));
         }
         openQueueBuckets.clear();
         openEndpointBuckets.clear();
+        openQueueMinutes.clear();
+        openEndpointMinutes.clear();
         append(lines);
+    }
+
+    /** The per-minute tally of the window being filled, opened by whichever event comes first. */
+    private MinuteTally minutesOf(String queueName) {
+        return openQueueMinutes.computeIfAbsent(queueName, name -> new MinuteTally(openBucketStart));
+    }
+
+    /** The busiest minute is known only now, when no further minute of this window can happen. */
+    private static QueueBucket withMinutePeaks(QueueBucket bucket, MinuteTally tally) {
+        return tally == null ? bucket
+                : bucket.withMinutePeaks(tally.peakTokensPerSecond(),
+                        tally.peakTokensPerSecondAtFullSlots(), tally.peakCharactersPerSecond());
     }
 
     /** Closes whatever is still open — called at shutdown so the last partial bucket is not lost. */
@@ -339,7 +367,7 @@ public class StatusHistoryStore {
         return total;
     }
 
-    static Instant floorToBucket(Instant now) {
+    public static Instant floorToBucket(Instant now) {
         long bucketSeconds = BUCKET_LENGTH.toSeconds();
         return Instant.ofEpochSecond(Math.floorDiv(now.getEpochSecond(), bucketSeconds) * bucketSeconds);
     }
@@ -458,12 +486,26 @@ public class StatusHistoryStore {
         node.put("queuedMs", totals.queuedMs());
         node.put("firstMs", totals.firstMs());
         node.put("characters", totals.characters());
+        node.put("maxTokensPerSecondOneReplyAlone", totals.maxTokensPerSecondOneReplyAlone());
+        node.put("maxTokensPerSecondOneReplyAtFullSlots", totals.maxTokensPerSecondOneReplyAtFullSlots());
+        node.put("maxCharactersPerSecondOneReplyAlone", totals.maxCharactersPerSecondOneReplyAlone());
+        node.put("maxTokensPerSecondOneMinute", totals.maxTokensPerSecondOneMinute());
+        node.put("maxTokensPerSecondOneMinuteAtFullSlots", totals.maxTokensPerSecondOneMinuteAtFullSlots());
+        node.put("maxCharactersPerSecondOneMinute", totals.maxCharactersPerSecondOneMinute());
     }
 
     private static GenerationTotals generatedOf(JsonNode node) {
+        // A line written before the maxima existed has neither field; asDouble() reads 0 for a
+        // missing node, which is what an unknown peak has to be -- Math.max leaves it behind.
         return new GenerationTotals(node.path("generations").asLong(), node.path("tokens").asLong(),
                 node.path("decodeMs").asLong(), node.path("queuedMs").asLong(),
-                node.path("firstMs").asLong(), node.path("characters").asLong());
+                node.path("firstMs").asLong(), node.path("characters").asLong(),
+                node.path("maxTokensPerSecondOneReplyAlone").asDouble(),
+                node.path("maxTokensPerSecondOneReplyAtFullSlots").asDouble(),
+                node.path("maxCharactersPerSecondOneReplyAlone").asDouble(),
+                node.path("maxTokensPerSecondOneMinute").asDouble(),
+                node.path("maxTokensPerSecondOneMinuteAtFullSlots").asDouble(),
+                node.path("maxCharactersPerSecondOneMinute").asDouble());
     }
 
     private void append(List<String> lines) {

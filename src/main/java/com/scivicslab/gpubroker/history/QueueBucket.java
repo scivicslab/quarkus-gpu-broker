@@ -38,6 +38,13 @@ public record QueueBucket(String queueName, Instant bucketStart, int sampleCount
                 completed, failed, generated.plus(one));
     }
 
+    /** This bucket as it closes, carrying the busiest minute its window saw. */
+    public QueueBucket withMinutePeaks(double tokensPerSecond, double tokensPerSecondAtFullSlots,
+                                          double charactersPerSecond) {
+        return new QueueBucket(queueName, bucketStart, sampleCount, activeSum, idleSum, pendingSum,
+                completed, failed, generated.withMinutePeaks(tokensPerSecond, tokensPerSecondAtFullSlots, charactersPerSecond));
+    }
+
     /**
      * Two records of the same ten-minute window, added together. Restarting inside a window
      * leaves one row written by the stopping instance and one by the starting instance; without

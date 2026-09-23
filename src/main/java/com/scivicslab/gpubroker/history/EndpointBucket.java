@@ -41,6 +41,13 @@ public record EndpointBucket(String address, String queueName, Instant bucketSta
                 workOk, workFailed, generated.plus(one));
     }
 
+    /** This bucket as it closes, carrying the busiest minute its window saw. */
+    public EndpointBucket withMinutePeaks(double tokensPerSecond, double tokensPerSecondAtFullSlots,
+                                          double charactersPerSecond) {
+        return new EndpointBucket(address, queueName, bucketStart, probeOk, probeTotal,
+                workOk, workFailed, generated.withMinutePeaks(tokensPerSecond, tokensPerSecondAtFullSlots, charactersPerSecond));
+    }
+
     /**
      * This bucket plus one job this address actually ran.
      *

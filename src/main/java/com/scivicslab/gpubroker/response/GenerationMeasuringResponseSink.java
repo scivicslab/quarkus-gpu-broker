@@ -26,6 +26,9 @@ public final class GenerationMeasuringResponseSink implements ResponseSink {
     private long lastText;
     private String address;
     private boolean reported;
+    /** The two readings of the queue's occupancy: at hand-off and at completion. */
+    private int[] slotsAtStart;
+    private int[] slotsAtEnd;
 
     /**
      * @param delegate  where everything is forwarded, unchanged and in order
@@ -43,6 +46,15 @@ public final class GenerationMeasuringResponseSink implements ResponseSink {
     public void dispatched() {
         dispatched = System.currentTimeMillis();
         delegate.dispatched();
+    }
+
+    @Override
+    public void slotsInUse(int busy, int total) {
+        int[] reading = {busy, total};
+        if (slotsAtStart == null) {
+            slotsAtStart = reading;
+        }
+        slotsAtEnd = reading;
     }
 
     @Override
@@ -88,6 +100,23 @@ public final class GenerationMeasuringResponseSink implements ResponseSink {
         delegate.fail(cause);
     }
 
+    /**
+     * Whether nothing else was generating, at both ends of this reply. A reply that started alone
+     * and ended in a crowd is neither alone nor at full slots: it is left out of both peaks rather
+     * than guessed at.
+     */
+    private boolean ranAlone() {
+        return slotsAtStart != null && slotsAtEnd != null
+                && slotsAtStart[0] == 1 && slotsAtEnd[0] == 1;
+    }
+
+    /** Whether every attached slot was generating, at both ends of this reply. */
+    private boolean ranAtFullSlots() {
+        return slotsAtStart != null && slotsAtEnd != null
+                && slotsAtStart[1] > 0
+                && slotsAtStart[0] == slotsAtStart[1] && slotsAtEnd[0] == slotsAtEnd[1];
+    }
+
     /** Reports once. A sink can be failed after it has been completed; the first ending is the one. */
     private void hand() {
         if (reported) {
@@ -98,6 +127,6 @@ public final class GenerationMeasuringResponseSink implements ResponseSink {
         long first = dispatched == 0 || firstText == 0 ? 0 : firstText - dispatched;
         long decode = firstText == 0 ? 0 : lastText - firstText;
         report.accept(new GenerationMeasurement(queueName, address, queued, first, decode,
-                scanner.events(), scanner.characters()));
+                scanner.events(), scanner.characters(), ranAlone(), ranAtFullSlots()));
     }
 }

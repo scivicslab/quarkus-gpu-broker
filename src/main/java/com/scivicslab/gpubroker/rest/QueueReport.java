@@ -65,9 +65,13 @@ public record QueueReport(String name, int activeSlots, int idleSlots, int total
         }
         int total = now.activeCount() + now.idleCount();
         List<com.scivicslab.gpubroker.history.QueueBucket> queueBuckets = snapshot.queueBuckets();
-        GenerationRateReport generated = queueBuckets.isEmpty()
+        // The newest window that has closed, not the one still filling: the rates divide by the
+        // full ten minutes either way (GenerationRateWindowsAndLayout_260923_oo01).
+        com.scivicslab.gpubroker.history.QueueBucket closed =
+                GenerationWindows.lastClosed(queueBuckets, java.time.Instant.now());
+        GenerationRateReport generated = closed == null
                 ? GenerationRateReport.NONE
-                : GenerationRateReport.of(queueBuckets.get(queueBuckets.size() - 1).generated());
+                : GenerationRateReport.of(closed.generated());
         return new QueueReport(status.queueName(), now.activeCount(), now.idleCount(), total,
                 now.pendingCount(), snapshot.completedLastHour(),
                 isReady(total, endpoints), generated, List.copyOf(endpoints));

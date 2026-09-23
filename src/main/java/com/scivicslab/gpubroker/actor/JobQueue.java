@@ -157,6 +157,8 @@ public final class JobQueue {
             idleEndpointIds.addLast(endpointId);
         } else {
             reserveIfForeground(endpointId, job);
+            // Counted with this job's own slot already taken out of the idle set by pollWork.
+            job.responseSink().slotsInUse(busySlots(), totalSlots());
         }
         return job;
     }
@@ -170,6 +172,19 @@ public final class JobQueue {
     public Job attach(String endpointId) {
         activeEndpointIds.add(endpointId);
         return requestWork(endpointId);
+    }
+
+    /**
+     * Slots generating right now, and slots attached. Read from inside this actor's mailbox,
+     * which is the only place the two sets are consistent with each other
+     * ({@code GenerationRateWindowsAndLayout_260923_oo01}).
+     */
+    public int busySlots() {
+        return activeEndpointIds.size() - idleEndpointIds.size();
+    }
+
+    public int totalSlots() {
+        return activeEndpointIds.size();
     }
 
     /** Take every job still waiting (not yet handed to any endpoint) for graceful drain. */

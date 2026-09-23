@@ -204,17 +204,16 @@ class StatusPageRendererTest {
     }
 
     /**
-     * Three scales are in play and a reader cannot tell which figure moves on which, so the header
-     * names all three.
+     * The window a figure covers is now written beside the figure, so the header says that rather
+     * than listing the scales itself ({@code GenerationRateWindowsAndLayout_260923_oo01}).
      */
     @Test
-    void headerNamesTheThreeScales() {
+    void headerSendsTheReaderToTheRowLabelsAndTheTooltips() {
         String html = StatusPageRenderer.render(List.of(), Map.of(), Map.of());
 
-        assertTrue(html.contains("<b>now</b>"), "the layer that reloads");
-        assertTrue(html.contains("<b>10 min</b>"), "the window tok/s and waiting time cover");
-        assertTrue(html.contains("<b>24 h</b>"), "the span of the bands and charts");
-        assertTrue(html.contains("144 windows of 10 min"), "and how the longest is built from the middle one");
+        assertTrue(html.contains("names the window it covers"), "where the window is written");
+        assertTrue(html.contains("what it is divided by when you hover"), "where the definition is");
+        assertTrue(html.contains("144 windows of 10 min"), "how the charts below the cards are built");
     }
 
     private static int countOccurrences(String haystack, String needle) {
