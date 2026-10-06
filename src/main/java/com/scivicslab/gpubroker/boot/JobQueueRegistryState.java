@@ -1,8 +1,10 @@
 package com.scivicslab.gpubroker.boot;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.Supplier;
 
 import com.scivicslab.gpubroker.actor.JobQueue;
@@ -84,7 +86,7 @@ public class JobQueueRegistryState {
 
     /** {@code queueName} -> {@code JobQueue} actor, for {@code JobQueueRegistry.statusSnapshot}. */
     public Map<String, ActorRef<JobQueue>> queueMap() {
-        return Map.copyOf(queues);
+        return byName(queues);
     }
 
     /** Every registered queue, for shutdown draining. */
@@ -93,7 +95,7 @@ public class JobQueueRegistryState {
     }
 
     public Map<String, String> displayNames() {
-        return Map.copyOf(displayNames);
+        return byName(displayNames);
     }
 
     public void setDraining() {
@@ -102,5 +104,16 @@ public class JobQueueRegistryState {
 
     public boolean isDraining() {
         return draining;
+    }
+
+    /**
+     * A copy ordered by queue name. The callers of these two maps put what they hold on a screen or
+     * in a JSON array -- {@code GET /queues}, the status page, {@code GET /v1/models} -- and a reader
+     * comparing two runs needs the same queue in the same place. A {@code HashMap} orders by hash,
+     * and {@code Map.copyOf} salts its iteration order afresh in every JVM, so the broker used to
+     * list its queues in a different order after each restart.
+     */
+    private static <V> Map<String, V> byName(Map<String, V> source) {
+        return Collections.unmodifiableMap(new TreeMap<>(source));
     }
 }
