@@ -39,7 +39,7 @@ class PeriodicRediscoveryTest {
     private static final EndpointProbe PROBE = new StubProbe();
 
     private static EndpointSurveyor.Found found(String address, String queueName) {
-        return new EndpointSurveyor.Found(PROBE, new EndpointInfo(address, queueName, queueName, 1));
+        return new EndpointSurveyor.Found(PROBE, new EndpointInfo(address, queueName, queueName, 1, 0));
     }
 
     @Test

@@ -25,6 +25,8 @@ public class JobQueueRegistryState {
 
     private final Map<String, ActorRef<JobQueue>> queues = new HashMap<>();
     private final Map<String, String> displayNames = new HashMap<>();
+    /** queue -> the longest prompt-plus-reply window its endpoints accept; absent when unknown. */
+    private final Map<String, Integer> contextLengths = new HashMap<>();
     /** address -> the queue it is currently registered in, so a later survey can tell whether
      *  that address moved to another model (see {@code PeriodicRediscovery_260923_oo01}). */
     private final Map<String, String> endpointQueues = new HashMap<>();
@@ -49,6 +51,18 @@ public class JobQueueRegistryState {
 
     public void putDisplayName(String queueName, String displayName) {
         displayNames.put(queueName, displayName);
+    }
+
+    /**
+     * Records this queue's context length. The endpoints of one queue serve the same model and are
+     * expected to agree; when they do not, the smallest wins, because a prompt that fits only the
+     * larger one fails whenever the queue hands it to the other.
+     */
+    public void putContextLength(String queueName, int contextLength) {
+        if (contextLength <= 0) {
+            return;
+        }
+        contextLengths.merge(queueName, contextLength, Math::min);
     }
 
     /** Records that {@code address} now serves {@code queueName}. */
@@ -79,6 +93,7 @@ public class JobQueueRegistryState {
     public void removeQueue(String queueName) {
         queues.remove(queueName);
         displayNames.remove(queueName);
+        contextLengths.remove(queueName);
     }
 
     /**
@@ -99,6 +114,10 @@ public class JobQueueRegistryState {
     /** Every registered queue, for shutdown draining. */
     public List<ActorRef<JobQueue>> allQueues() {
         return List.copyOf(queues.values());
+    }
+
+    public Map<String, Integer> contextLengths() {
+        return byName(contextLengths);
     }
 
     public Map<String, String> displayNames() {

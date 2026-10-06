@@ -13,8 +13,12 @@
 # capabilities: per host:port overrides/declarations. max-concurrency overrides
 # EndpointProbe.defaultMaxConcurrency() and is actually used by AiServiceEndpointBuilder
 # to size the worker pool — see the 192.168.5.14 example in CapabilityConfig_260810_oo01.
-# max-context-length / thinking-mode-supported / tool-calling-supported are operator-declared,
-# display-only fields shown on the status page — never verified against the real service.
+# max-context-length is the fallback for a server that does not report its own window: the chat
+# probe reads vLLM's max_model_len and Strata's meta.n_ctx out of /v1/models, and GET /v1/models
+# answers whichever of the two it has. TensorFold reports neither, so its window has to be declared
+# here or clients are left without one. thinking-mode-supported / tool-calling-supported are
+# operator-declared, display-only fields shown on the status page — never verified against the
+# real service.
 #
 # broker:
 #   capabilities:

@@ -12,7 +12,10 @@ package com.scivicslab.gpubroker.config;
  * JobQueueRegistry} needs it (from {@link EndpointProbe#deriveDisplayName}) to serve {@code
  * OpenAiCompatResource}'s {@code GET /v1/models}, and it is only known at discovery time here,
  * not reconstructible later from the sanitized {@code queueName} — see {@code
- * OpenAiCompatFacade_260822_oo01}.
+ * OpenAiCompatFacade_260822_oo01}. {@code contextLength} travels the same way and for the same
+ * reason: {@code GET /v1/models} answers it to clients, and only the probe's reply knows it.
+ * 0 means the service did not say and no operator declared one.
  */
-public record EndpointInfo(String address, String queueName, String displayName, int maxConcurrency) {
+public record EndpointInfo(String address, String queueName, String displayName, int maxConcurrency,
+                           int contextLength) {
 }

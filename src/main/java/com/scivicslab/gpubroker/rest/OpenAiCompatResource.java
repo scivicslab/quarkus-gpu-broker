@@ -1,6 +1,8 @@
 package com.scivicslab.gpubroker.rest;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.Map;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -79,6 +81,7 @@ public class OpenAiCompatResource {
         ObjectNode root = MAPPER.createObjectNode();
         root.put("object", "list");
         ArrayNode data = root.putArray("data");
+        Map<String, Integer> contextLengths = queues.contextLengths();
         for (var entry : queues.displayNames().entrySet()) {
             if (!entry.getKey().startsWith(ChatQueueName.PREFIX)) {
                 continue;
@@ -87,6 +90,14 @@ public class OpenAiCompatResource {
             model.put("id", entry.getValue());
             model.put("object", "model");
             model.put("owned_by", "gpu-broker");
+            // The field vLLM itself answers here, so a client that used to talk to a vLLM node
+            // directly reads the window the same way through the broker. Absent when neither the
+            // service nor an operator said what it is, which a client must read as "unknown"
+            // rather than as zero.
+            Integer contextLength = contextLengths.get(entry.getKey());
+            if (contextLength != null && contextLength > 0) {
+                model.put("max_model_len", contextLength);
+            }
         }
         return Response.ok(root.toString(), MediaType.APPLICATION_JSON).build();
     }

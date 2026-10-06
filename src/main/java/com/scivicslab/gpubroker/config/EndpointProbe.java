@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -59,6 +60,20 @@ public interface EndpointProbe {
      */
     default Optional<String> deriveDisplayName(String probeResponseBody) {
         return deriveQueueName(probeResponseBody);
+    }
+
+    /**
+     * The longest prompt-plus-reply window this endpoint accepts, read out of the probe's own
+     * answer, or empty when the service does not say. Only the chat kinds have one; OCR and
+     * embedding services take a page or a sentence and have nothing to report.
+     *
+     * <p>Probed rather than declared because a client has to know it before it sends a long
+     * document, and the number moves whenever an operator restarts a server with another window.
+     * {@code broker.capabilities.<host:port>.max-context-length} stays as the fallback for a
+     * server that keeps the number to itself ({@code EndpointProbe#contextLengthOf}).</p>
+     */
+    default OptionalInt deriveContextLength(String probeResponseBody) {
+        return OptionalInt.empty();
     }
 
     /** Default {@code maxConcurrency} for this kind; {@code broker.capabilities.<host:port>.max-concurrency} overrides it per instance. */
@@ -111,7 +126,24 @@ public interface EndpointProbe {
             return Optional.empty();
         }
         String displayName = deriveDisplayName(response.body()).orElse(queueName.get());
-        return Optional.of(new EndpointInfo(address, queueName.get(), displayName, resolveMaxConcurrency(address, capabilities)));
+        return Optional.of(new EndpointInfo(address, queueName.get(), displayName,
+                resolveMaxConcurrency(address, capabilities),
+                contextLengthOf(response.body(), address, capabilities)));
+    }
+
+    /**
+     * This endpoint's context length: what the service itself reported, else what an operator
+     * declared for it, else 0 for "unknown". TensorFold is the reason the declared value is still
+     * consulted -- it serves a 262,144-token window and says so only in its startup log.
+     */
+    private int contextLengthOf(String probeResponseBody, String address,
+                                 Map<String, BrokerConfig.EndpointCapability> capabilities) {
+        OptionalInt probed = deriveContextLength(probeResponseBody);
+        if (probed.isPresent()) {
+            return probed.getAsInt();
+        }
+        BrokerConfig.EndpointCapability capability = capabilities.get(address);
+        return capability != null ? capability.maxContextLength().orElse(0) : 0;
     }
 
     /**

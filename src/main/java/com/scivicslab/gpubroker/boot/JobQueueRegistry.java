@@ -127,6 +127,11 @@ public class JobQueueRegistry {
         return state.ask(JobQueueRegistryState::displayNames).join();
     }
 
+    /** {@code queueName} -> the longest prompt-plus-reply window the queue accepts, for {@code GET /v1/models}. */
+    public Map<String, Integer> contextLengths() {
+        return state.ask(JobQueueRegistryState::contextLengths).join();
+    }
+
     private void registerEndpoint(EndpointProbe probe, EndpointInfo info) {
         JobQueueRegistryState.Registration registration = state.ask(s ->
                 s.registerQueue(info.queueName(), () -> root.createChild(info.queueName(), new JobQueue()))
@@ -137,6 +142,9 @@ public class JobQueueRegistry {
             queue.tell(q -> q.bind(system, queue));
             queue.tell(JobQueue::startReconciliation);
         }
+        // Outside the isNew branch: the second endpoint of a queue reports its own window, and the
+        // queue can only promise the smaller of the two.
+        state.tell(s -> s.putContextLength(info.queueName(), info.contextLength()));
         AiServiceEndpoint endpoint = builder.build(info, probe.requestPath());
         ActorRef<AiServiceEndpoint> endpointRef = queue.createChild(info.address(), endpoint);
         endpointRef.tell(e -> e.bind(system, endpointRef));
