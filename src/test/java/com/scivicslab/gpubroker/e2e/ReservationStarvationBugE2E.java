@@ -30,7 +30,7 @@ import io.restassured.RestAssured;
  */
 class ReservationStarvationBugE2E extends GpuBrokerE2EBase {
 
-    private static final String QUEUE = "vllm-Qwen2.5-14B-Instruct-AWQ";
+    private static final String QUEUE = "chat-Qwen2.5-14B-Instruct-AWQ";
     private static final Duration RESERVATION_WINDOW = Duration.ofMinutes(3);
 
     public static void main(String[] args) throws Exception {

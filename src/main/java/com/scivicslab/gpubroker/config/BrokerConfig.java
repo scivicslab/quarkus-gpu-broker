@@ -29,7 +29,7 @@ public interface BrokerConfig {
 
     /**
      * Per-queue limits on one reply's generation, keyed by queue name (e.g.
-     * {@code vllm-google-gemma-4-26B-A4B-it}). Empty if unset.
+     * {@code chat-google-gemma-4-26B-A4B-it}). Empty if unset.
      *
      * <p>Keyed by queue rather than by host:port because these are properties of the model, not of
      * the machine serving it: a context length of 131,072 belongs to {@code gemma-4}, and the two

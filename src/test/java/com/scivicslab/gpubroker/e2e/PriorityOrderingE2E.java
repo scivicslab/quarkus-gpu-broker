@@ -12,7 +12,7 @@ import io.restassured.RestAssured;
  * foreground job queued after a background job completes before it.
  *
  * <p>Needs a queue with exactly one real {@code AiServiceEndpoint} so
- * dispatch order is observable — reuses {@code vllm-Qwen2.5-14B-Instruct-AWQ}
+ * dispatch order is observable — reuses {@code chat-Qwen2.5-14B-Instruct-AWQ}
  * (192.168.5.14:8000, {@code max-concurrency=1}, see
  * {@code CappedConcurrencyLoadE2E}) rather than a stub, since the real
  * cluster already has exactly this shape.
@@ -36,7 +36,7 @@ import io.restassured.RestAssured;
  */
 class PriorityOrderingE2E extends GpuBrokerE2EBase {
 
-    private static final String QUEUE = "vllm-Qwen2.5-14B-Instruct-AWQ";
+    private static final String QUEUE = "chat-Qwen2.5-14B-Instruct-AWQ";
 
     public static void main(String[] args) throws Exception {
         new PriorityOrderingE2E().run();

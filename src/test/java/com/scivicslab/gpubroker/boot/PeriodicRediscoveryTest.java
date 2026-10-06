@@ -46,7 +46,7 @@ class PeriodicRediscoveryTest {
     @DisplayName("応答したが未登録のアドレスは、登録対象になる")
     void of_respondingUnregisteredAddress_isRegistered() {
         List<ReconcilePlan.Change> changes = ReconcilePlan.of(
-                Map.of(), List.of(found("192.168.5.19:8000", "vllm-qwen3.8-flash-next")));
+                Map.of(), List.of(found("192.168.5.19:8000", "chat-qwen3.8-flash-next")));
 
         assertEquals(1, changes.size());
         assertEquals("192.168.5.19:8000", changes.get(0).found().info().address());
@@ -56,23 +56,23 @@ class PeriodicRediscoveryTest {
     @Test
     @DisplayName("別のモデルを名乗り始めたアドレスは、古い待ち行列から移される")
     void of_addressNowServingAnotherModel_movesQueue() {
-        Map<String, String> registered = Map.of("192.168.5.19:8000", "vllm-nvidia-Cosmos3-Nano");
+        Map<String, String> registered = Map.of("192.168.5.19:8000", "chat-nvidia-Cosmos3-Nano");
 
         List<ReconcilePlan.Change> changes = ReconcilePlan.of(
-                registered, List.of(found("192.168.5.19:8000", "vllm-qwen3.8-flash-next")));
+                registered, List.of(found("192.168.5.19:8000", "chat-qwen3.8-flash-next")));
 
         assertEquals(1, changes.size());
-        assertEquals("vllm-nvidia-Cosmos3-Nano", changes.get(0).leavingQueue());
-        assertEquals("vllm-qwen3.8-flash-next", changes.get(0).found().info().queueName());
+        assertEquals("chat-nvidia-Cosmos3-Nano", changes.get(0).leavingQueue());
+        assertEquals("chat-qwen3.8-flash-next", changes.get(0).found().info().queueName());
     }
 
     @Test
     @DisplayName("同じ待ち行列に登録済みのアドレスは、何も起こさない")
     void of_alreadyRegisteredInSameQueue_producesNoChange() {
-        Map<String, String> registered = Map.of("192.168.5.18:8000", "vllm-qwen3.8-flash-next");
+        Map<String, String> registered = Map.of("192.168.5.18:8000", "chat-qwen3.8-flash-next");
 
         List<ReconcilePlan.Change> changes = ReconcilePlan.of(
-                registered, List.of(found("192.168.5.18:8000", "vllm-qwen3.8-flash-next")));
+                registered, List.of(found("192.168.5.18:8000", "chat-qwen3.8-flash-next")));
 
         assertTrue(changes.isEmpty());
     }
@@ -81,12 +81,12 @@ class PeriodicRediscoveryTest {
     @DisplayName("応答しなかった登録済みアドレスは、そのまま残る")
     void of_registeredAddressThatAnsweredNothing_isLeftAlone() {
         Map<String, String> registered = Map.of(
-                "192.168.5.23:8000", "vllm-Qwen-Qwen3.8-27B",
-                "192.168.5.18:8000", "vllm-qwen3.8-flash-next");
+                "192.168.5.23:8000", "chat-Qwen-Qwen3.8-27B",
+                "192.168.5.18:8000", "chat-qwen3.8-flash-next");
 
         // 5.23 restarted and answered nothing this round; only 5.18 is in the survey.
         List<ReconcilePlan.Change> changes = ReconcilePlan.of(
-                registered, List.of(found("192.168.5.18:8000", "vllm-qwen3.8-flash-next")));
+                registered, List.of(found("192.168.5.18:8000", "chat-qwen3.8-flash-next")));
 
         assertTrue(changes.isEmpty(), "a silent endpoint must not be torn out of its queue");
     }
@@ -95,19 +95,19 @@ class PeriodicRediscoveryTest {
     @DisplayName("最後の待受口を失った待ち行列は、広告からも名前解決からも消える")
     void removeQueue_afterLastEndpointLeaves_stopsAdvertisingAndResolving() {
         JobQueueRegistryState state = new JobQueueRegistryState();
-        state.registerQueue("vllm-nvidia-Cosmos3-Nano", () -> null);
-        state.putDisplayName("vllm-nvidia-Cosmos3-Nano", "nvidia/Cosmos3-Nano");
-        state.putEndpoint("192.168.5.19:8000", "vllm-nvidia-Cosmos3-Nano");
+        state.registerQueue("chat-nvidia-Cosmos3-Nano", () -> null);
+        state.putDisplayName("chat-nvidia-Cosmos3-Nano", "nvidia/Cosmos3-Nano");
+        state.putEndpoint("192.168.5.19:8000", "chat-nvidia-Cosmos3-Nano");
 
-        assertTrue(state.hasEndpoints("vllm-nvidia-Cosmos3-Nano"));
+        assertTrue(state.hasEndpoints("chat-nvidia-Cosmos3-Nano"));
 
         state.removeEndpoint("192.168.5.19:8000");
-        assertFalse(state.hasEndpoints("vllm-nvidia-Cosmos3-Nano"));
+        assertFalse(state.hasEndpoints("chat-nvidia-Cosmos3-Nano"));
 
-        state.removeQueue("vllm-nvidia-Cosmos3-Nano");
-        assertFalse(state.displayNames().containsKey("vllm-nvidia-Cosmos3-Nano"),
+        state.removeQueue("chat-nvidia-Cosmos3-Nano");
+        assertFalse(state.displayNames().containsKey("chat-nvidia-Cosmos3-Nano"),
                 "GET /v1/models must stop offering a model nothing serves");
-        assertNull(state.get("vllm-nvidia-Cosmos3-Nano"),
+        assertNull(state.get("chat-nvidia-Cosmos3-Nano"),
                 "a request naming it must fall through to the unknown-queue 404");
     }
 
@@ -115,13 +115,13 @@ class PeriodicRediscoveryTest {
     @DisplayName("他のアドレスが残っている待ち行列は、広告され続ける")
     void hasEndpoints_whenAnotherAddressRemains_staysTrue() {
         JobQueueRegistryState state = new JobQueueRegistryState();
-        state.putEndpoint("192.168.5.16:8000", "vllm-google-gemma-4-26B-A4B-it");
-        state.putEndpoint("192.168.5.17:8000", "vllm-google-gemma-4-26B-A4B-it");
+        state.putEndpoint("192.168.5.16:8000", "chat-google-gemma-4-26B-A4B-it");
+        state.putEndpoint("192.168.5.17:8000", "chat-google-gemma-4-26B-A4B-it");
 
         state.removeEndpoint("192.168.5.16:8000");
 
-        assertTrue(state.hasEndpoints("vllm-google-gemma-4-26B-A4B-it"));
-        assertEquals(Map.of("192.168.5.17:8000", "vllm-google-gemma-4-26B-A4B-it"),
+        assertTrue(state.hasEndpoints("chat-google-gemma-4-26B-A4B-it"));
+        assertEquals(Map.of("192.168.5.17:8000", "chat-google-gemma-4-26B-A4B-it"),
                 state.endpointQueues());
     }
 }

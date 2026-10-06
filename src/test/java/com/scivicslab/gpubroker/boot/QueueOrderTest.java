@@ -17,8 +17,8 @@ class QueueOrderTest {
     @Test
     void queuesAndDisplayNamesComeBackSortedByQueueName() {
         JobQueueRegistryState state = new JobQueueRegistryState();
-        List<String> inserted = List.of("yomitoku-ocr", "vllm-qwen3.8-flash-next", "embedding-e5large",
-                "marker-ocr", "vllm-google-gemma-4-26B-A4B-it", "whisper-transcript");
+        List<String> inserted = List.of("yomitoku-ocr", "chat-qwen3.8-flash-next", "embedding-e5large",
+                "marker-ocr", "chat-google-gemma-4-26B-A4B-it", "whisper-transcript");
         for (String name : inserted) {
             state.registerQueue(name, () -> null);
             state.putDisplayName(name, name + " display");

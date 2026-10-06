@@ -12,7 +12,7 @@ import io.restassured.RestAssured;
  * a background job submitted right after a foreground job finishes must
  * NOT dispatch for ~3 minutes.
  *
- * <p>Reuses {@code vllm-Qwen2.5-14B-Instruct-AWQ} (single real endpoint,
+ * <p>Reuses {@code chat-Qwen2.5-14B-Instruct-AWQ} (single real endpoint,
  * see {@link PriorityOrderingE2E}) so the reservation is observable via
  * the status page's active count. Takes about 3 minutes to run — this is
  * the slowest scenario in the suite, but it needs no stub or broker
@@ -21,7 +21,7 @@ import io.restassured.RestAssured;
  */
 class ForegroundReservationE2E extends GpuBrokerE2EBase {
 
-    private static final String QUEUE = "vllm-Qwen2.5-14B-Instruct-AWQ";
+    private static final String QUEUE = "chat-Qwen2.5-14B-Instruct-AWQ";
     private static final Duration RESERVATION_WINDOW = Duration.ofMinutes(3);
 
     public static void main(String[] args) throws Exception {

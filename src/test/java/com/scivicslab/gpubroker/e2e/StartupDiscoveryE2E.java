@@ -15,10 +15,10 @@ class StartupDiscoveryE2E extends GpuBrokerE2EBase {
         String status = fetchStatus();
 
         require(status.contains("embedding-e5large"), "expected embedding-e5large queue: " + status);
-        require(status.contains("vllm-Qwen2.5-14B-Instruct-AWQ"), "expected the capped Qwen queue: " + status);
+        require(status.contains("chat-Qwen2.5-14B-Instruct-AWQ"), "expected the capped Qwen queue: " + status);
         // google/gemma-4-26B-A4B-it contains '/' — queueName must be sanitized, not just present.
-        require(status.contains("vllm-google-gemma-4-26B-A4B-it"), "expected sanitized gemma-4 queueName: " + status);
-        require(!status.contains("vllm-google/gemma"), "queueName must not retain '/': " + status);
+        require(status.contains("chat-google-gemma-4-26B-A4B-it"), "expected sanitized gemma-4 queueName: " + status);
+        require(!status.contains("chat-google/gemma"), "queueName must not retain '/': " + status);
 
         LOG.info("Discovered queues confirmed on: " + BASE_URL);
         System.out.println("StartupDiscoveryE2E: PASSED");

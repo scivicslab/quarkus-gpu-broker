@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
-import com.scivicslab.gpubroker.config.VllmQueueName;
+import com.scivicslab.gpubroker.config.ChatQueueName;
 
 import io.smallrye.mutiny.Multi;
 import io.vertx.core.buffer.Buffer;
@@ -51,7 +51,7 @@ public class OpenAiCompatResource {
         if (model == null || model.isBlank()) {
             return errorResponse(400, "request body must include a \"model\" field");
         }
-        return proxy.submit(VllmQueueName.of(model), rawBody, contentType, priorityHeader);
+        return proxy.submit(ChatQueueName.of(model), rawBody, contentType, priorityHeader);
     }
 
     /** The embedding model is effectively singular across the broker, so no {@code model}-based routing is needed. */
@@ -68,7 +68,7 @@ public class OpenAiCompatResource {
      * unsanitized model id (e.g. {@code google/gemma-4-26B-A4B-it}) the downstream vLLM server
      * itself expects in a chat request's {@code "model"} field -- not the sanitized queue-name
      * suffix. A client echoing this id straight back in {@code POST /v1/chat/completions} both
-     * routes to the right queue ({@link com.scivicslab.gpubroker.config.VllmQueueName#of}
+     * routes to the right queue ({@link com.scivicslab.gpubroker.config.ChatQueueName#of}
      * re-derives the same queue name) and reaches the downstream server with a {@code "model"}
      * value it recognizes -- see {@code OpenAiCompatFacade_260822_oo01} "なぜ表示名にサニタイズ前の
      * モデルIDが要るか".
@@ -80,7 +80,7 @@ public class OpenAiCompatResource {
         root.put("object", "list");
         ArrayNode data = root.putArray("data");
         for (var entry : queues.displayNames().entrySet()) {
-            if (!entry.getKey().startsWith("vllm-")) {
+            if (!entry.getKey().startsWith(ChatQueueName.PREFIX)) {
                 continue;
             }
             ObjectNode model = data.addObject();

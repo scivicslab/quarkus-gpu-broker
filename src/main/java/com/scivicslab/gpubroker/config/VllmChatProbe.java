@@ -36,7 +36,7 @@ public class VllmChatProbe implements EndpointProbe {
 
     @Override
     public Optional<String> deriveQueueName(String probeResponseBody) {
-        return extractModelName(probeResponseBody).map(VllmQueueName::of);
+        return extractModelName(probeResponseBody).map(ChatQueueName::of);
     }
 
     /** The true, unsanitized model id (e.g. {@code google/gemma-4-26B-A4B-it}) -- see {@code

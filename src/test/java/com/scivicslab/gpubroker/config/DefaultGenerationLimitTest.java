@@ -36,20 +36,20 @@ class DefaultGenerationLimitTest {
     void aQueueWithNoEntryOfItsOwn_takesTheDefault() {
         BrokerConfig config = new Config(Map.of(BrokerConfig.ANY_QUEUE, Limit.ofMaxTokens(8192)));
 
-        assertEquals(8192, config.generationLimitFor("vllm-something-nobody-listed").maxTokens().getAsInt());
+        assertEquals(8192, config.generationLimitFor("chat-something-nobody-listed").maxTokens().getAsInt());
     }
 
     @Test
     void anEntryOfItsOwn_replacesTheDefault() {
         BrokerConfig config = new Config(Map.of(
                 BrokerConfig.ANY_QUEUE, Limit.ofMaxTokens(8192),
-                "vllm-small", Limit.ofMaxTokens(4096)));
+                "chat-small", Limit.ofMaxTokens(4096)));
 
-        assertEquals(4096, config.generationLimitFor("vllm-small").maxTokens().getAsInt());
+        assertEquals(4096, config.generationLimitFor("chat-small").maxTokens().getAsInt());
     }
 
     @Test
     void noEntryAndNoDefault_isNoLimit() {
-        assertNull(new Config(Map.of()).generationLimitFor("vllm-anything"));
+        assertNull(new Config(Map.of()).generationLimitFor("chat-anything"));
     }
 }

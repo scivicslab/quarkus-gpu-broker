@@ -20,7 +20,7 @@ class EndpointProbeTest {
     void vllmChat_derivesQueueNameFromModelsResponse() {
         String body = "{\"object\":\"list\",\"data\":[{\"id\":\"gemma-4\",\"object\":\"model\"}]}";
 
-        assertEquals("vllm-gemma-4", vllmChat.deriveQueueName(body).orElseThrow());
+        assertEquals("chat-gemma-4", vllmChat.deriveQueueName(body).orElseThrow());
     }
 
     @Test
@@ -31,7 +31,7 @@ class EndpointProbeTest {
 
         String queueName = vllmChat.deriveQueueName(body).orElseThrow();
 
-        assertEquals("vllm-google-gemma-4-26B-A4B-it", queueName);
+        assertEquals("chat-google-gemma-4-26B-A4B-it", queueName);
         assertFalse(queueName.contains("/"), "queueName must be a single URL path segment");
     }
 

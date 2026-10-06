@@ -8,6 +8,7 @@ import java.util.TreeMap;
 import java.util.function.Supplier;
 
 import com.scivicslab.gpubroker.actor.JobQueue;
+import com.scivicslab.gpubroker.config.ChatQueueName;
 import com.scivicslab.pojoactor.core.ActorRef;
 
 /**
@@ -80,8 +81,14 @@ public class JobQueueRegistryState {
         displayNames.remove(queueName);
     }
 
+    /**
+     * The {@code JobQueue} a caller named, or null. A name carrying the old {@code vllm-} prefix is
+     * looked up again under the current one ({@link ChatQueueName#resolve}), so a client built
+     * before the rename keeps working until it is rebuilt.
+     */
     public ActorRef<JobQueue> get(String queueName) {
-        return queues.get(queueName);
+        ActorRef<JobQueue> queue = queues.get(queueName);
+        return queue != null ? queue : queues.get(ChatQueueName.resolve(queueName));
     }
 
     /** {@code queueName} -> {@code JobQueue} actor, for {@code JobQueueRegistry.statusSnapshot}. */

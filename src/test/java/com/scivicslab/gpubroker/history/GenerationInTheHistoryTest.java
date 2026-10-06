@@ -24,10 +24,10 @@ class GenerationInTheHistoryTest {
     void recordGeneration_foldsIntoTheQueueAndTheAddress(@TempDir Path dir) {
         StatusHistoryStore store = new StatusHistoryStore(dir.resolve("history.jsonl"));
 
-        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.1:8000", 1500, 200, 4000, 400, 1200));
-        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.2:8000", 500, 100, 2000, 200, 600));
+        store.recordGeneration(NOW, new GenerationMeasurement("chat-a", "10.0.0.1:8000", 1500, 200, 4000, 400, 1200));
+        store.recordGeneration(NOW, new GenerationMeasurement("chat-a", "10.0.0.2:8000", 500, 100, 2000, 200, 600));
 
-        GenerationTotals queue = last(store.queueHistory("vllm-a")).generated();
+        GenerationTotals queue = last(store.queueHistory("chat-a")).generated();
         assertEquals(2, queue.generations());
         assertEquals(600, queue.tokens());
         assertEquals(1000, queue.meanQueuedMs(), "the wait no vLLM server can report");
@@ -41,10 +41,10 @@ class GenerationInTheHistoryTest {
     void recordGeneration_forAJobThatNeverReachedAServer_countsOnTheQueueOnly(@TempDir Path dir) {
         StatusHistoryStore store = new StatusHistoryStore(dir.resolve("history.jsonl"));
 
-        store.recordGeneration(NOW, new GenerationMeasurement("vllm-a", null, 900, 0, 0, 0, 0));
+        store.recordGeneration(NOW, new GenerationMeasurement("chat-a", null, 900, 0, 0, 0, 0));
 
-        assertEquals(1, last(store.queueHistory("vllm-a")).generated().generations());
-        assertTrue(store.addressesOf("vllm-a").isEmpty());
+        assertEquals(1, last(store.queueHistory("chat-a")).generated().generations());
+        assertTrue(store.addressesOf("chat-a").isEmpty());
     }
 
     @Test
@@ -52,16 +52,16 @@ class GenerationInTheHistoryTest {
         // Exactly the shape the broker wrote until generations were measured: no such fields.
         Path file = dir.resolve("history.jsonl");
         Files.write(file, List.of(
-                "{\"kind\":\"queue\",\"bucket\":\"" + WINDOW + "\",\"queue\":\"vllm-a\",\"samples\":3,"
+                "{\"kind\":\"queue\",\"bucket\":\"" + WINDOW + "\",\"queue\":\"chat-a\",\"samples\":3,"
                         + "\"activeSum\":6,\"idleSum\":9,\"pendingSum\":0,\"completed\":4,\"failed\":0}",
                 "{\"kind\":\"endpoint\",\"bucket\":\"" + WINDOW + "\",\"address\":\"10.0.0.1:8000\","
-                        + "\"queue\":\"vllm-a\",\"probeOk\":3,\"probeTotal\":3}"),
+                        + "\"queue\":\"chat-a\",\"probeOk\":3,\"probeTotal\":3}"),
                 StandardCharsets.UTF_8);
 
         StatusHistoryStore store = new StatusHistoryStore(file);
         store.load(NOW);
 
-        QueueBucket restored = last(store.queueHistory("vllm-a"));
+        QueueBucket restored = last(store.queueHistory("chat-a"));
         assertEquals(4, restored.completed(), "what the old file did hold is still read");
         assertEquals(GenerationTotals.NONE, restored.generated());
         assertEquals(GenerationTotals.NONE, last(store.endpointHistory("10.0.0.1:8000")).generated());
@@ -71,13 +71,13 @@ class GenerationInTheHistoryTest {
     void whatWasMeasured_survivesBeingWrittenAndReadBack(@TempDir Path dir) {
         Path file = dir.resolve("history.jsonl");
         StatusHistoryStore writing = new StatusHistoryStore(file);
-        writing.recordGeneration(NOW, new GenerationMeasurement("vllm-a", "10.0.0.1:8000", 1500, 200, 4000, 400, 1200));
+        writing.recordGeneration(NOW, new GenerationMeasurement("chat-a", "10.0.0.1:8000", 1500, 200, 4000, 400, 1200));
         writing.flush();
 
         StatusHistoryStore reading = new StatusHistoryStore(file);
         reading.load(NOW.plusSeconds(60));
 
-        GenerationTotals totals = last(reading.queueHistory("vllm-a")).generated();
+        GenerationTotals totals = last(reading.queueHistory("chat-a")).generated();
         assertEquals(1, totals.generations());
         assertEquals(400, totals.tokens());
         assertEquals(4000, totals.decodeMs());

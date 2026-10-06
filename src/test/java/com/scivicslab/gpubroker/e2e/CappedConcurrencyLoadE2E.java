@@ -25,7 +25,7 @@ import io.restassured.RestAssured;
  */
 class CappedConcurrencyLoadE2E extends GpuBrokerE2EBase {
 
-    private static final String CAPPED_QUEUE = "vllm-Qwen2.5-14B-Instruct-AWQ";
+    private static final String CAPPED_QUEUE = "chat-Qwen2.5-14B-Instruct-AWQ";
     private static final int CONCURRENT_REQUESTS = 3;
 
     public static void main(String[] args) throws Exception {

@@ -28,7 +28,7 @@ import com.scivicslab.gpubroker.model.QueueStatus;
 @DisplayName("速さの数字は、閉じた窓から読み、窓の名前を名乗る")
 class GenerationRateWindowsAndLayoutTest {
 
-    private static final String QUEUE = "vllm-gemma4";
+    private static final String QUEUE = "chat-gemma4";
     /** 12:05 — five minutes into the window that opened at 12:00. */
     private static final Instant INSIDE_SECOND_WINDOW = Instant.parse("2026-09-23T12:05:00Z");
     private static final Instant FIRST_WINDOW = Instant.parse("2026-09-23T11:52:00Z");

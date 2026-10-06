@@ -34,7 +34,7 @@ class RepetitionStoppingResponseSinkTest {
     }
 
     private static RepetitionStoppingResponseSink watching(Kept kept) {
-        RepetitionStoppingResponseSink sink = new RepetitionStoppingResponseSink(kept, "vllm-test");
+        RepetitionStoppingResponseSink sink = new RepetitionStoppingResponseSink(kept, "chat-test");
         sink.start("text/event-stream");
         return sink;
     }

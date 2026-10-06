@@ -36,7 +36,7 @@ class GenerationMeasuringResponseSinkTest {
         Kept kept = new Kept();
         List<GenerationMeasurement> reported = new ArrayList<>();
         GenerationMeasuringResponseSink sink =
-                new GenerationMeasuringResponseSink(kept, "vllm-test", reported::add);
+                new GenerationMeasuringResponseSink(kept, "chat-test", reported::add);
 
         sink.dispatched();
         sink.servedBy("192.168.5.16:8000");
@@ -48,7 +48,7 @@ class GenerationMeasuringResponseSinkTest {
 
         assertEquals(1, reported.size());
         GenerationMeasurement one = reported.get(0);
-        assertEquals("vllm-test", one.queueName());
+        assertEquals("chat-test", one.queueName());
         assertEquals("192.168.5.16:8000", one.address());
         assertEquals(3, one.tokens(), "one event carrying text counts as one token");
         assertEquals(13, one.characters(), "\"one \" + \"two \" + \"three\"");
@@ -59,7 +59,7 @@ class GenerationMeasuringResponseSinkTest {
     void framingWithoutGeneratedText_isNotCounted() {
         List<GenerationMeasurement> reported = new ArrayList<>();
         GenerationMeasuringResponseSink sink =
-                new GenerationMeasuringResponseSink(new Kept(), "vllm-test", reported::add);
+                new GenerationMeasuringResponseSink(new Kept(), "chat-test", reported::add);
 
         sink.dispatched();
         sink.start("text/event-stream");
@@ -76,7 +76,7 @@ class GenerationMeasuringResponseSinkTest {
     void aReplyThatFailedBeforeItStarted_stillReportsWhatItWaited() {
         List<GenerationMeasurement> reported = new ArrayList<>();
         GenerationMeasuringResponseSink sink =
-                new GenerationMeasuringResponseSink(new Kept(), "vllm-test", reported::add);
+                new GenerationMeasuringResponseSink(new Kept(), "chat-test", reported::add);
 
         sink.dispatched();
         sink.fail(new IllegalStateException("every endpoint refused"));
@@ -90,7 +90,7 @@ class GenerationMeasuringResponseSinkTest {
     void endingTwice_reportsOnce() {
         List<GenerationMeasurement> reported = new ArrayList<>();
         GenerationMeasuringResponseSink sink =
-                new GenerationMeasuringResponseSink(new Kept(), "vllm-test", reported::add);
+                new GenerationMeasuringResponseSink(new Kept(), "chat-test", reported::add);
 
         sink.dispatched();
         sink.complete();
@@ -104,7 +104,7 @@ class GenerationMeasuringResponseSinkTest {
         // Four replies of 100 tokens each, every one of them taking 10 seconds of generation.
         GenerationTotals totals = GenerationTotals.NONE;
         for (int i = 0; i < 4; i++) {
-            totals = totals.plus(new GenerationMeasurement("vllm-test", "a:1", 2000, 300, 10_000, 100, 350));
+            totals = totals.plus(new GenerationMeasurement("chat-test", "a:1", 2000, 300, 10_000, 100, 350));
         }
 
         // One reply at a time reads as 10 tok/s …
@@ -121,7 +121,7 @@ class GenerationMeasuringResponseSinkTest {
     void charactersAreCountedWhateverTheTokenizerDid() {
         List<GenerationMeasurement> reported = new ArrayList<>();
         GenerationMeasuringResponseSink sink =
-                new GenerationMeasuringResponseSink(new Kept(), "vllm-test", reported::add);
+                new GenerationMeasuringResponseSink(new Kept(), "chat-test", reported::add);
         sink.dispatched();
         sink.start("text/event-stream");
         // Japanese arrives as raw UTF-8, three bytes to the character.

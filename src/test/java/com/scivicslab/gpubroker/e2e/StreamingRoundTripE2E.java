@@ -17,7 +17,7 @@ import java.util.stream.Stream;
  */
 class StreamingRoundTripE2E extends GpuBrokerE2EBase {
 
-    private static final String QUEUE = "vllm-google-gemma-4-26B-A4B-it";
+    private static final String QUEUE = "chat-google-gemma-4-26B-A4B-it";
 
     public static void main(String[] args) throws Exception {
         new StreamingRoundTripE2E().run();

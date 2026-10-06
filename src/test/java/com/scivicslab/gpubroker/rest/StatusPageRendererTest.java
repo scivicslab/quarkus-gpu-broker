@@ -32,12 +32,12 @@ class StatusPageRendererTest {
 
     @Test
     void oneQueue_rendersItsNameAndCounts() {
-        QueueStatus status = new QueueStatus("vllm-gemma4",
+        QueueStatus status = new QueueStatus("chat-gemma4",
                 new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000", "192.168.5.14:8000"), 3, 0, 0));
 
         String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
 
-        assertTrue(html.contains("vllm-gemma4"));
+        assertTrue(html.contains("chat-gemma4"));
         assertTrue(html.contains("active <b>1</b>"));
         assertTrue(html.contains("idle <b>2</b>"));
         assertTrue(html.contains("pending <b>3</b>"));
@@ -49,7 +49,7 @@ class StatusPageRendererTest {
      */
     @Test
     void eachCountCarriesItsUnit() {
-        QueueStatus status = new QueueStatus("vllm-gemma4", new QueueSnapshot(
+        QueueStatus status = new QueueStatus("chat-gemma4", new QueueSnapshot(
                 List.of("192.168.5.16:8000#0"), List.of("192.168.5.16:8000#1"), 7, 0, 0));
 
         String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
@@ -62,7 +62,7 @@ class StatusPageRendererTest {
 
     @Test
     void oneQueue_listsTheActualEndpointAddresses() {
-        QueueStatus status = new QueueStatus("vllm-gemma4",
+        QueueStatus status = new QueueStatus("chat-gemma4",
                 new QueueSnapshot(List.of("192.168.5.16:8000"), List.of("192.168.5.17:8000"), 0, 0, 0));
 
         String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
@@ -77,7 +77,7 @@ class StatusPageRendererTest {
      */
     @Test
     void severalWorkersOfOneAddress_collapseToOneRow() {
-        QueueStatus status = new QueueStatus("vllm-gemma4", new QueueSnapshot(
+        QueueStatus status = new QueueStatus("chat-gemma4", new QueueSnapshot(
                 List.of("192.168.5.16:8000#0"), List.of("192.168.5.16:8000#1", "192.168.5.16:8000#2"), 0, 0, 0));
 
         String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
@@ -89,7 +89,7 @@ class StatusPageRendererTest {
     /** Before the first probe lands there is no history, and the addresses must still be listed. */
     @Test
     void withoutAnyHistory_stillListsRegisteredAddresses() {
-        QueueStatus status = new QueueStatus("vllm-gemma4",
+        QueueStatus status = new QueueStatus("chat-gemma4",
                 new QueueSnapshot(List.of(), List.of("192.168.5.17:8000#0"), 0, 0, 0));
 
         String html = StatusPageRenderer.render(List.of(status), Map.of(), historyFor(status));
@@ -137,7 +137,7 @@ class StatusPageRendererTest {
     @Test
     void endpointWithDeclaredCapability_showsItLabeledAsDeclared() {
         // endpointId is a Worker name ("host:port#slot"); the capability map is keyed by the bare address.
-        QueueStatus status = new QueueStatus("vllm-gemma4",
+        QueueStatus status = new QueueStatus("chat-gemma4",
                 new QueueSnapshot(List.of("192.168.5.14:8000#0"), List.of(), 0, 0, 0));
         Map<String, BrokerConfig.EndpointCapability> capabilities =
                 Map.of("192.168.5.14:8000", new StubEndpointCapability(32768, true, null));

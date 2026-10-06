@@ -30,7 +30,7 @@ import io.restassured.RestAssured;
  * release or after a machine was touched.
  *
  * <ul>
- *   <li>{@code vllm-*} (any OpenAI-compatible chat endpoint: vLLM, TensorFold, Strata): several
+ *   <li>{@code chat-*} (any OpenAI-compatible chat endpoint: vLLM, TensorFold, Strata): several
  *       requests at once, each a few hundred tokens of generated text with thinking off; the
  *       reply must carry text, and tokens per second is reported per endpoint</li>
  *   <li>{@code embedding-e5large}: a batch of sentences; every vector must have 1024 dimensions</li>
@@ -128,7 +128,7 @@ class FleetHealthE2E extends GpuBrokerE2EBase {
         long t0 = System.nanoTime();
         try {
             String detail;
-            if (queue.startsWith("vllm-")) {
+            if (queue.startsWith("chat-")) {
                 detail = chat(base, viaBroker);
             } else if (queue.startsWith("embedding")) {
                 detail = embedding(base, viaBroker);
@@ -226,9 +226,9 @@ class FleetHealthE2E extends GpuBrokerE2EBase {
         throw new AssertionError("the broker's /v1/models has no model for queue " + queue);
     }
 
-    /** The broker's queue name for a model id, the same rule as {@code VllmQueueName.of}. */
+    /** The broker's queue name for a model id, the same rule as {@code ChatQueueName.of}. */
     private static String sanitized(String modelId) {
-        return com.scivicslab.gpubroker.config.VllmQueueName.of(modelId);
+        return com.scivicslab.gpubroker.config.ChatQueueName.of(modelId);
     }
 
     private String firstModelId(String modelsUrl) throws Exception {
