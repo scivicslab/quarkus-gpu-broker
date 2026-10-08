@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -109,6 +110,54 @@ class PeriodicRediscoveryTest {
                 "GET /v1/models must stop offering a model nothing serves");
         assertNull(state.get("chat-nvidia-Cosmos3-Nano"),
                 "a request naming it must fall through to the unknown-queue 404");
+    }
+
+    @Test
+    @DisplayName("無応答が閾値に達するまでは、stale として報告されない")
+    void staleAddresses_beforeThreshold_reportsNothing() {
+        JobQueueRegistryState state = new JobQueueRegistryState();
+        state.putEndpoint("192.168.5.17:8001", "marker-ocr");
+
+        for (int round = 1; round < JobQueueRegistryState.MISSES_BEFORE_STALE; round++) {
+            assertTrue(state.staleAddresses(Set.of()).isEmpty(),
+                    "round " + round + " must not yet report the address as stale");
+        }
+    }
+
+    @Test
+    @DisplayName("無応答が連続して閾値に達したアドレスは、stale として報告される")
+    void staleAddresses_atThreshold_reportsTheAddress() {
+        JobQueueRegistryState state = new JobQueueRegistryState();
+        state.putEndpoint("192.168.5.17:8001", "marker-ocr");
+
+        List<String> stale = List.of();
+        for (int round = 1; round <= JobQueueRegistryState.MISSES_BEFORE_STALE; round++) {
+            stale = state.staleAddresses(Set.of());
+        }
+
+        assertEquals(List.of("192.168.5.17:8001"), stale,
+                "the " + JobQueueRegistryState.MISSES_BEFORE_STALE + "th consecutive miss must report it");
+    }
+
+    @Test
+    @DisplayName("途中で一度でも応答すれば、無応答の連続回数は0に戻る")
+    void staleAddresses_oneAnswerInBetween_resetsTheCount() {
+        JobQueueRegistryState state = new JobQueueRegistryState();
+        state.putEndpoint("192.168.5.17:8001", "marker-ocr");
+
+        // Miss every round but the last, up to one short of the threshold, then answer once --
+        // a busy endpoint (measured: Marker's own GET / took 8 s under four concurrent requests
+        // against a 2 s probe timeout) regains its clean slate the moment it answers again.
+        for (int round = 1; round < JobQueueRegistryState.MISSES_BEFORE_STALE; round++) {
+            state.staleAddresses(Set.of());
+        }
+        state.staleAddresses(Set.of("192.168.5.17:8001"));
+
+        for (int round = 1; round < JobQueueRegistryState.MISSES_BEFORE_STALE; round++) {
+            assertTrue(state.staleAddresses(Set.of()).isEmpty(),
+                    "the reset must buy another " + JobQueueRegistryState.MISSES_BEFORE_STALE
+                            + " rounds of grace, round " + round + " must not yet report it");
+        }
     }
 
     @Test

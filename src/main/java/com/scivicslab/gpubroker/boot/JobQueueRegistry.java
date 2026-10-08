@@ -4,6 +4,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.jboss.logging.Logger;
 
@@ -77,8 +79,13 @@ public class JobQueueRegistry {
     /**
      * Brings the registry in line with one round of probing: registers an address that answers
      * but is not registered, and moves an address that now answers under a different queue name
-     * (its node's model was replaced). Leaves a registered address that answered nothing alone —
-     * a server that is merely restarting must not churn the actor tree.
+     * (its node's model was replaced). Leaves a registered address that answered nothing alone
+     * for up to {@value JobQueueRegistryState#MISSES_BEFORE_STALE} rounds — a server that is
+     * merely restarting must not be torn out of rotation over one missed probe — and withdraws
+     * it once it passes that count, so a job no longer goes to an address that has been silent
+     * for minutes (see {@code StaleEndpointWithdrawal_261008_oo01}; this replaced leaving a silent
+     * address registered forever, which routed every second page of an OCR import to a Marker
+     * instance whose container had been stopped).
      *
      * <p>Called once a minute by {@link EndpointPoller} with the same survey the status history
      * is recorded from. See {@code PeriodicRediscovery_260923_oo01}.
@@ -88,6 +95,17 @@ public class JobQueueRegistry {
             return;
         }
         Map<String, String> registered = state.ask(JobQueueRegistryState::endpointQueues).join();
+
+        Set<String> answered = found.stream()
+                .map(f -> f.info().address())
+                .collect(Collectors.toSet());
+        for (String address : state.ask(s -> s.staleAddresses(answered)).join()) {
+            String queueName = registered.get(address);
+            if (queueName != null) {
+                unregisterEndpoint(address, queueName);
+            }
+        }
+
         for (ReconcilePlan.Change change : ReconcilePlan.of(registered, found)) {
             if (change.leavingQueue() != null) {
                 unregisterEndpoint(change.found().info().address(), change.leavingQueue());
