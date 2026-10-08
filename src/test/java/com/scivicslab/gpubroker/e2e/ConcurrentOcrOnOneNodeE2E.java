@@ -161,7 +161,19 @@ class ConcurrentOcrOnOneNodeE2E extends GpuBrokerE2EBase {
      * one page, a font, a content stream, and a cross-reference table with real byte offsets.
      */
     static byte[] densePagePdf() {
+        return densePagePdf("");
+    }
+
+    /**
+     * The same page with {@code label} written above the lines, so that two requests can carry pages
+     * that differ in their bytes and not only in their file names. An empty label writes nothing.
+     * The label is placed in a PDF string literal, so it must not contain a parenthesis or backslash.
+     */
+    static byte[] densePagePdf(String label) {
         StringBuilder ops = new StringBuilder("BT /F1 11 Tf 50 740 Td 21 TL ");
+        if (!label.isEmpty()) {
+            ops.append("(").append(label).append(") Tj T* ");
+        }
         for (int i = 1; i <= 32; i++) {
             ops.append("(Line ").append(i)
                .append(": the quick brown fox jumps over the lazy dog while the committee argues.) Tj T* ");
