@@ -38,6 +38,15 @@ public interface BrokerConfig {
      */
     Map<String, QueueGenerationLimit> generationLimits();
 
+    /**
+     * Whether a chat queue accepts a request whose messages carry an image, keyed by queue name
+     * (e.g. {@code chat-qwen3.8-flash-next-tensorfold}). Written by hand by whoever starts the
+     * inference servers: whether a server takes images depends on the server and the flags it was
+     * started with, which the operator knows and the broker does not. A queue with no entry is
+     * unknown ({@code ImageInputTable_261009_oo01}).
+     */
+    Map<String, Boolean> imageInput();
+
     /** The key an entry uses to stand for every queue that has no entry of its own. */
     String ANY_QUEUE = "*";
 

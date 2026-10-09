@@ -30,6 +30,7 @@ class DefaultGenerationLimitTest {
     private record Config(Map<String, QueueGenerationLimit> generationLimits) implements BrokerConfig {
         @Override public Optional<List<String>> nodes() { return Optional.empty(); }
         @Override public Map<String, EndpointCapability> capabilities() { return Map.of(); }
+        @Override public Map<String, Boolean> imageInput() { return Map.of(); }
     }
 
     @Test

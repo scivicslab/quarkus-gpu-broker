@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
+import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.config.ChatQueueName;
 
 import io.smallrye.mutiny.Multi;
@@ -43,6 +44,9 @@ public class OpenAiCompatResource {
     @Inject
     JobQueueRegistry queues;
 
+    @Inject
+    BrokerConfig config;
+
     /** {@code model} is read from the request body (the same field vLLM itself reads), not a path param. */
     @POST
     @Path("/chat/completions")
@@ -53,7 +57,14 @@ public class OpenAiCompatResource {
         if (model == null || model.isBlank()) {
             return errorResponse(400, "request body must include a \"model\" field");
         }
-        return proxy.submit(ChatQueueName.of(model), rawBody, contentType, priorityHeader);
+        String queueName = ChatQueueName.of(model);
+        // Refused here, before it is queued, so the client gets a real 400 naming the cause; sent
+        // on, the inference server's own 400 would reach the client as a 200 carrying an error
+        // body (ImageInputTable_261009_oo01).
+        if (refusesImage(config.imageInput(), queueName, rawBody)) {
+            return errorResponse(400, "model " + model + " does not accept image input");
+        }
+        return proxy.submit(queueName, rawBody, contentType, priorityHeader);
     }
 
     /** The embedding model is effectively singular across the broker, so no {@code model}-based routing is needed. */
@@ -98,8 +109,39 @@ public class OpenAiCompatResource {
             if (contextLength != null && contextLength > 0) {
                 model.put("max_model_len", contextLength);
             }
+            // The shape Strata answers in its own GET /v1/models. Absent for a queue the table
+            // does not list, which a client must read as "unknown" (ImageInputTable_261009_oo01).
+            Boolean acceptsImages = config.imageInput().get(entry.getKey());
+            if (acceptsImages != null) {
+                ArrayNode modalities = model.putObject("architecture").putArray("input_modalities");
+                modalities.add("text");
+                if (acceptsImages) {
+                    modalities.add("image");
+                }
+            }
         }
         return Response.ok(root.toString(), MediaType.APPLICATION_JSON).build();
+    }
+
+    /** Whether the table says {@code queueName} takes no images and the request carries one. */
+    static boolean refusesImage(Map<String, Boolean> imageInput, String queueName, byte[] rawBody) {
+        return Boolean.FALSE.equals(imageInput.get(queueName)) && carriesImage(rawBody);
+    }
+
+    /** Whether any message's content holds a part of type {@code image_url}. */
+    static boolean carriesImage(byte[] rawBody) {
+        try {
+            for (JsonNode message : MAPPER.readTree(rawBody).path("messages")) {
+                for (JsonNode part : message.path("content")) {
+                    if ("image_url".equals(part.path("type").asText())) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     static String extractModel(byte[] rawBody) {
