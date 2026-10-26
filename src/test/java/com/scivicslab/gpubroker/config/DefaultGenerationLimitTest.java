@@ -31,6 +31,7 @@ class DefaultGenerationLimitTest {
         @Override public Optional<List<String>> nodes() { return Optional.empty(); }
         @Override public Map<String, EndpointCapability> capabilities() { return Map.of(); }
         @Override public Map<String, Boolean> imageInput() { return Map.of(); }
+        @Override public Optional<List<String>> backgroundSubmitters() { return Optional.empty(); }
     }
 
     @Test

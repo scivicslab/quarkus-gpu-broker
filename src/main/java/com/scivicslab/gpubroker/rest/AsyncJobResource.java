@@ -1,15 +1,11 @@
 package com.scivicslab.gpubroker.rest;
 
-import com.scivicslab.gpubroker.actor.AiServiceEndpointWorker;
 import com.scivicslab.gpubroker.actor.JobQueue;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
-import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
 import com.scivicslab.gpubroker.model.RequestBody;
 import com.scivicslab.gpubroker.response.JobResultStore;
-import com.scivicslab.gpubroker.response.PolledResponseSink;
 import com.scivicslab.pojoactor.core.ActorRef;
-import com.scivicslab.pojoactor.core.ActorSystem;
 
 import io.smallrye.common.annotation.Blocking;
 import jakarta.inject.Inject;
@@ -43,13 +39,16 @@ public class AsyncJobResource {
     JobQueueRegistry queues;
 
     @Inject
-    ActorSystem system;
-
-    @Inject
     ActorRef<JobResultStore> results;
 
     @Inject
     SubmissionAdmissionControl admission;
+
+    @Inject
+    AsyncJobDispatcher dispatcher;
+
+    @Inject
+    com.scivicslab.gpubroker.config.LiveConfig config;
 
     @POST
     @Blocking
@@ -70,16 +69,10 @@ public class AsyncJobResource {
             return Response.status(429).build();
         }
 
-        String jobId = results.ask(JobResultStore::register).join();
-        Priority priority = Priority.fromHeader(priorityHeader);
-        PolledResponseSink sink = new PolledResponseSink(jobId, results);
-        Job job = Job.first(new RequestBody(rawBody, contentType), priority,
-                new AdmissionReleasingResponseSink(sink, () -> admission.release(submitterId, queueName)));
-
-        String endpointId = queue.ask(q -> q.submit(job)).join();
-        if (endpointId != null) {
-            dispatch(endpointId, job);
-        }
+        Priority priority = config.priorityFor(submitterId, Priority.fromHeader(priorityHeader));
+        RequestBody request = new RequestBody(rawBody, contentType);
+        String jobId = results.ask(r -> r.register(queueName, priority, submitterId, request)).join();
+        dispatcher.dispatch(jobId, queueName, priority, submitterId, request);
         return Response.accepted(jobId).build();
     }
 
@@ -90,10 +83,5 @@ public class AsyncJobResource {
         return results.ask(r -> r.get(jobId)).join()
                 .map(r -> Response.ok(r).build())
                 .orElse(Response.status(404).build());
-    }
-
-    private void dispatch(String endpointId, Job job) {
-        ActorRef<AiServiceEndpointWorker> worker = system.getActor(endpointId);
-        worker.tell(w -> w.assign(job));
     }
 }

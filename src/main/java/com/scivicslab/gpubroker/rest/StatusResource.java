@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
-import com.scivicslab.gpubroker.config.BrokerConfig;
+import com.scivicslab.gpubroker.config.LiveConfig;
 import com.scivicslab.gpubroker.history.StatusHistoryStore;
 import com.scivicslab.gpubroker.history.StatusHistoryStore.QueueHistorySnapshot;
 import com.scivicslab.gpubroker.model.QueueStatus;
@@ -39,7 +39,7 @@ public class StatusResource {
     JobQueueRegistry queues;
 
     @Inject
-    BrokerConfig brokerConfig;
+    LiveConfig liveConfig;
 
     @Inject
     ActorRef<StatusHistoryStore> history;
@@ -49,7 +49,7 @@ public class StatusResource {
     @Produces(MediaType.TEXT_HTML)
     public String status() {
         List<QueueStatus> statuses = queues.statusSnapshot();
-        return StatusPageRenderer.render(statuses, brokerConfig.capabilities(), historyByQueue(statuses));
+        return StatusPageRenderer.render(statuses, liveConfig.capabilities(), historyByQueue(statuses));
     }
 
     /**

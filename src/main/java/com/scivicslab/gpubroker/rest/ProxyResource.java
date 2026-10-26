@@ -4,7 +4,7 @@ import com.scivicslab.gpubroker.actor.AiServiceEndpointWorker;
 import com.scivicslab.gpubroker.actor.JobQueue;
 import com.scivicslab.gpubroker.boot.DrainingException;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
-import com.scivicslab.gpubroker.config.BrokerConfig;
+import com.scivicslab.gpubroker.config.LiveConfig;
 import com.scivicslab.gpubroker.config.LimitedRequestBody;
 import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
@@ -55,7 +55,7 @@ public class ProxyResource {
     ActorSystem system;
 
     @Inject
-    BrokerConfig config;
+    LiveConfig config;
 
     @Inject
     ActorRef<StatusHistoryStore> history;
@@ -63,7 +63,8 @@ public class ProxyResource {
     @POST
     public RestMulti<Buffer> submit(@PathParam("queueName") String queueName, byte[] rawBody,
                                      @HeaderParam("Content-Type") String contentType,
-                                     @HeaderParam("X-Job-Priority") @DefaultValue("foreground") String priorityHeader) {
+                                     @HeaderParam("X-Job-Priority") @DefaultValue("foreground") String priorityHeader,
+                                     @HeaderParam("X-Submitter-Id") @DefaultValue("unknown") String submitterId) {
         if (queues.isDraining()) {
             return RestMulti.fromMultiData(Multi.createFrom().<Buffer>failure(new DrainingException()))
                     .status(503)
@@ -77,7 +78,8 @@ public class ProxyResource {
                     .build();
         }
 
-        Priority priority = Priority.fromHeader(priorityHeader);
+        // A submitter listed under background-submitters runs at background whatever it asked for.
+        Priority priority = config.priorityFor(submitterId, Priority.fromHeader(priorityHeader));
         // Every chat request arrives here: OpenAiCompatResource resolves a queue name and delegates
         // to this method, and a client that names the queue itself posts to it directly. It is
         // therefore the one place a limit can be put that holds for every client

@@ -52,3 +52,58 @@
 - [x] 消費者の切替（k8s 側のみ）: local-llm の `K8SPUPS_ENGLISH_TOOLKIT_GPU_BROKER_URL` → ClusterIP、MiniPC 側は NodePort。k8s-pups の共有サービスカード（状態/Open は全員、Launch/Stop は admin）は k8s-pups 側の todo
 - 結果: イメージ `1.1.0-2609231817`、Pod は stonefly521、8 キュー 13 endpoint すべて UP、capabilities の上書き（5.14/5.23 = 1）も効いた。NodePort は MiniPC・5.14 から 200、Pod 内から `gpu-broker.gpu-broker.svc:28005` も 200。gemma-4 への completion が NodePort 経由で返った。コミット: broker `Dockerfile`（作業ツリーの未コミット変更 10 ファイルは触っていない）、overlays
 - 結果: local-llm の English Toolkit Pod は `gpu-broker.gpu-broker.svc:28005` を使う（controller 0.1.0-2609231829、overlays 0826e61）。MiniPC 側の消費者は未切替（利用者の起動プロセスなので判断待ち）。MiniPC の 28005 は開発用として残る
+
+## 2026-10-25: broker を再起動せずに `max-concurrency` の変更を反映する
+背景: 5.16 の GLM 用 `max-concurrency: 4` が、Gemma-4 に入れ替えた後も残った。ConfigMap を書き換えても
+(1) Deployment が `subPath` でマウントしているので Pod のファイルが更新されず、(2) broker は
+`@ConfigMapping` の起動時の写しを使い続け、(3) `ReconcilePlan` は待ち行列名しか比べないので、
+登録済みの台の値が変わっても何もしない。バッチ処理中なので、この計画は**実装とイメージの用意まで**で、
+Pod の入れ替え（再起動）はバッチの完了後に利用者が決める。
+- [x] `AiServiceEndpoint.resize(int)` — 増やすときは worker を足し、減らすときは worker を待ち行列から外す（走行中の仕事は止めない）
+- [x] `CapabilityFile` — 毎分の走査で `config/application.yaml` の `broker.capabilities` を読み直す。壊れたファイルは直前の正しい値を保つ
+- [x] `EndpointSurveyor` が `CapabilityFile` を使う。`JobQueueRegistry.reconcile` が登録済みの台へ `resize` を呼ぶ
+- [x] 単体テスト（`AiServiceEndpoint` の増減、`CapabilityFile` の読み直し）、`rm -rf target && mvn install`
+- [x] `overlays/gpu-broker/deployment.yaml` の `subPath` を外す（手元のファイルだけ。適用しない）
+- [x] イメージを焼く（タグ `1.2.0-<YYMMDDHHmm>`）。Deployment には適用しない
+- 範囲外: `generation-limits` と `image-input` は起動時の写しのまま。登録済みの台の `max-context-length` の更新も対象外
+- 結果: 単体テスト 191 本緑（新規 9 本）。本物の jar を 28555 で別に起動し 5.16 だけを対象に、設定ファイルを書き換えて 4→12→32（行を削除）→3 が再起動なしで約 1 分以内に反映されることを確認（本番の broker には触れていない）
+- 結果: イメージ `192.168.5.13:32000/quarkus-gpu-broker:1.2.0-2610251146` を push 済み（6 レイヤーとも実体あり）。`overlays/gpu-broker/` の `deployment.yaml`（ディレクトリのマウント）と `kustomization.yaml`（新タグ）は手元を書き換えただけで**適用していない**。
+- 入れ替えの手順（バッチ完了後に利用者が決める。Pod が 1 回作り直される）: `kubectl diff -k overlays/gpu-broker` で差分が上の 2 つだけであることを確認 → `kubectl apply -k overlays/gpu-broker` → `GET /queues` で 5.16 のスロットが 32 になること
+- 以後は ConfigMap の `max-concurrency` を書き換えて `kubectl apply -f configmap.yaml` するだけで、約 1〜2 分で反映される（再起動なし）
+
+## 2026-10-25: 設定を再起動なしで効かせる（LiveConfig）と、呼び出し側の名前で背景に固定する
+背景: 設定の変更に broker の再起動が要るのは実用にならない、というユーザーの指摘。`CapabilityFile`（capabilities だけ）を `LiveConfig` に置き換え、`generation-limits`、`image-input`、`nodes`、新設の `background-submitters` も、ファイルを書き換えるだけで効くようにした。
+- [x] `LiveConfig` — 設定ファイルの更新時刻と大きさを毎回見て、変わったときだけ読み直す。壊れたファイルは直前の正しい値を保つ。ファイルが無ければ起動時の写し（`BrokerConfig`）を使う
+- [x] `background-submitters` — `X-Submitter-Id` がこの表にある呼び出し側は、`X-Job-Priority` に関係なく background で走る。`ProxyResource`、`OpenAiCompatResource`、`AsyncJobResource` の3つの入口が使う
+- [x] `EndpointSurveyor`（nodes と capabilities）、`ProxyResource`（generation-limits）、`OpenAiCompatResource`（image-input）、`StatusResource` を `LiveConfig` に切り替え
+- [x] 単体テスト 195 本緑。本物の jar を 28555 で別に起動し、設定ファイルの書き換えで、`image-input` は次の依頼から、ノード 5.17 は次の走査（約 37 秒）で反映されることを確認
+- [x] 罠: 新しいキーは `BrokerConfig` に宣言しないと、起動時の設定の検査（SRCFG00050）で拒否される（`broker.background-submitters` で実際に起きた）。キーを足すときは必ず `BrokerConfig` に宣言する
+- [x] イメージ `192.168.5.13:32000/quarkus-gpu-broker:1.2.0-2610251432` を push（6 レイヤーとも実体あり）。`overlays/gpu-broker/` の `kustomization.yaml`（新タグ）と `configmap.yaml`（`background-submitters: [rst-frame-import]`）は書き換えただけで**適用していない**
+- [x] 適用（2026-10-25 14:47、Pod を1回作り直した。像 1.2.0-2610251432）。本番の Pod で、コメントだけの ConfigMap を `kubectl apply -f configmap.yaml` したところ、同じ Pod（再起動 0）が 7 秒後に `LiveConfig reloaded` をログに出した。以後、設定の変更は ConfigMap の適用だけで済む
+- [ ] 呼び出し側（`plugin-rst-frame` の `ChatEndpoint`、`SimilarConcepts`）が `X-Submitter-Id: rst-frame-import` を付ける
+
+## 2026-10-25: broker を再起動しても `/jobs` の仕事を失わない（ジョブの保存）
+背景: 14:47 の Pod 入れ替えで、メモリ上の仕事が全部消えた。portal(28001)の `GpuBrokerClient` は
+`GET /jobs/{queue}/{id}` の 404 を「まだ見つからない」として待ち続け、未完了の枠が戻らず、PDF 取り込み 35 本と
+新しい送信が止まった。ユーザーの要求: broker は再起動しても仕事を失ってはいけない。
+`JobResultStoreLifecycle_260810_oo01` は「再起動をまたぐ永続化は設けない」と決めていた。この判断を覆す。
+- 範囲: 非同期（submit-then-poll）の `/jobs/{queue}` だけ。ストリーミングの `/queue`・`/v1/*` は接続が切れるので対象外
+- 保存先: PVC（`nfs-k8s`、1000:1000）の `/data/jobs/`。DB は使わない。1 仕事 = 受け付け記録（queue 名、priority、submitter、content-type、本体）と結果の 2 ファイル。書き込みは一時ファイル→rename
+- 再起動後: 起動時に全部読み込む。DONE/FAILED は `GET` に答える。PENDING は、その queue が `reconcile` で登録され次第、最初から実行し直す
+- 期限: 既存の TTL（1 時間）を保存側にも適用する
+- 呼び出し側の保険: `gpu-broker-client` は、404 が一定時間続いたジョブを FAILED にして枠を返す
+- [ ] 設計文書 `JobResultStoreLifecycle_260810_oo01` の「永続化しない」を改める（またはその続きの文書を書く）— 実装後に書く
+- [x] `JobJournal`（ファイル保存）、`JobResultStore` の保存・読み込み、単体テスト 9 本（`JobResultStoreRestartTest`）
+- [x] PENDING の再実行: `AsyncJobDispatcher`（`AsyncJobResource` と共有）と `JobRecovery`（5 秒ごとに queue を見て投入、admission も取る）。保存先は `gpu.broker.jobs-dir`（未設定ならメモリのみ）
+- [x] 本物の jar を 28555 で起動し、Marker に 3 件投げて `kill -9`。結果済み 1 件は結果ごと、未完了 2 件は PENDING として残り、起動後に自動で再実行されて 3 件とも DONE（本番の broker には触れていない）
+- [x] `gpu-broker-client`: 404 が 2 分続いたジョブを FAILED にして枠を返す。broker に届かない間（接続失敗）は失敗にしない。単体テスト 20 本緑（新規 5 本）。`mvn install` で `.m2` の 0.2.0 を上書き済み。portal への取り込みとバージョン番号は利用者が決める
+- [x] overlays（手元のみ・未適用）: `pvc.yaml`（longhorn 5Gi、RWO）、`deployment.yaml`（`/data` を PVC に、`GPU_BROKER_JOBS_DIR=/data/jobs`、`fsGroup: 1000`）。履歴（`/data/history.jsonl`）も入れ替えで消えなくなる
+- [x] 像 `192.168.5.13:32000/quarkus-gpu-broker:1.2.0-2610251537` を 5.14 で焼いて push（6 ブロブとも実体あり）。`kubectl diff -k` の差分は、像のタグ、`GPU_BROKER_JOBS_DIR`、`fsGroup`、`data` を PVC に、PVC の新設、の 5 つだけ。**適用していない**
+- [x] 適用（2026-10-25 16:00、Pod を最後に 1 回作り直した）。PVC `gpu-broker-data`（longhorn 5Gi）が Bound、`/data/jobs` ができ、6 queue が見えた。本番の Marker に 1 件投げて `.res` が PVC に書かれ、DONE を確認。以後の Pod の入れ替えで `/jobs` の仕事は消えない
+- 残り: portal に新しい `gpu-broker-client`（404 打ち切り）を取り込む（バージョン番号は利用者が決める）。エンドポイントの health が再入れ替え直後は UNKNOWN で始まる（履歴ファイルが空のため）
+
+## 後で: インタラクティブな仕事が使うスロット数の上限を設定できるようにする（ユーザー要望 2026-10-25）
+- 今の `JobQueue` は、急ぎ(FOREGROUND)の仕事を処理したスロットを、同じ会話の次の頼みのために数分間「予約」し、その間は後回し(BACKGROUND)の仕事を渡さない。予約できるスロット数に上限が無い。
+- やること: queue ごとに「急ぎの仕事が同時に予約・使用できるスロット数の最大」を `LiveConfig` の表(`broker.…`)で設定できるようにする（再起動なしで効く。`BrokerConfig` への宣言を忘れない）。上限を超えた急ぎの仕事は、予約を使わず空きスロットを通常どおり取る。
+- 範囲外: 予約の長さ(数分)の変更は別の話。
+- 注意: 設定のキーを足すので、既存の2回目の配備ではなく、次のコード変更と一緒に入れる。配備前に呼び出し側の走行中ジョブが無いことを確かめる（broker は今は再起動しても `/jobs` の仕事を失わないが、`/v1/chat/completions` の頼みは接続が切れる）。

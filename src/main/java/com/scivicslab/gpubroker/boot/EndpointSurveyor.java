@@ -13,6 +13,7 @@ import org.jboss.logging.Logger;
 import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.config.EndpointInfo;
 import com.scivicslab.gpubroker.config.EndpointProbe;
+import com.scivicslab.gpubroker.config.LiveConfig;
 
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
@@ -39,8 +40,9 @@ public class EndpointSurveyor {
     @Inject
     Instance<EndpointProbe> knownProbeBeans;
 
+    /** Read again whenever the file changes, so an edit to nodes or max-concurrency needs no restart. */
     @Inject
-    BrokerConfig brokerConfig;
+    LiveConfig liveConfig;
 
     /**
      * Every node IP to probe, with each configured CIDR block expanded to its addresses.
@@ -48,7 +50,7 @@ public class EndpointSurveyor {
      */
     public List<String> expandNodeIps() {
         List<String> expanded = new ArrayList<>();
-        for (String entry : brokerConfig.nodes().orElse(List.of())) {
+        for (String entry : liveConfig.nodes()) {
             expanded.addAll(CidrRange.expand(entry));
         }
         return expanded;
@@ -66,7 +68,7 @@ public class EndpointSurveyor {
     public List<Found> surveyNow() {
         List<EndpointProbe> knownProbes = knownProbeBeans.stream().toList();
         List<String> nodeIps = expandNodeIps();
-        Map<String, BrokerConfig.EndpointCapability> capabilities = brokerConfig.capabilities();
+        Map<String, BrokerConfig.EndpointCapability> capabilities = liveConfig.capabilities();
 
         List<Found> found = new ArrayList<>();
         try (ExecutorService kindSurveys = Executors.newVirtualThreadPerTaskExecutor()) {

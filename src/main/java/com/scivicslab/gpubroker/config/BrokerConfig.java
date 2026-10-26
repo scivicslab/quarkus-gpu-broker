@@ -47,6 +47,14 @@ public interface BrokerConfig {
      */
     Map<String, Boolean> imageInput();
 
+    /**
+     * Names of submitters ({@code X-Submitter-Id}) whose jobs always run at background priority,
+     * whatever {@code X-Job-Priority} they send. Declared here so that Quarkus accepts the key at
+     * startup; the broker reads the current list through {@code LiveConfig}, which sees an edit to
+     * the file without a restart.
+     */
+    Optional<List<String>> backgroundSubmitters();
+
     /** The key an entry uses to stand for every queue that has no entry of its own. */
     String ANY_QUEUE = "*";
 

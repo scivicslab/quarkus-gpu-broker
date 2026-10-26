@@ -112,6 +112,16 @@ public class JobQueueRegistry {
             }
             registerEndpoint(change.found().probe(), change.found().info());
         }
+
+        // An address that stayed in its queue may still have been given another max-concurrency in
+        // the capabilities file. (An address registered or moved just above was built with the
+        // current value, so it is skipped: its queue differs from the one in the snapshot.)
+        for (EndpointSurveyor.Found f : found) {
+            String address = f.info().address();
+            if (f.info().queueName().equals(registered.get(address))) {
+                resizeEndpoint(address, f.info().queueName(), f.info().maxConcurrency());
+            }
+        }
     }
 
     void onShutdown(@Observes ShutdownEvent event) {
@@ -170,6 +180,31 @@ public class JobQueueRegistry {
         state.tell(s -> s.putEndpoint(info.address(), info.queueName())).join();
         LOG.infof("discovered %s at %s -> queue %s (maxConcurrency=%d)",
                 probe.getClass().getSimpleName(), info.address(), info.queueName(), info.maxConcurrency());
+    }
+
+    /**
+     * Gives {@code address} the number of workers {@code maxConcurrency} asks for, without
+     * touching a job in flight. Growing adds workers; shrinking withdraws the newest ones from the
+     * queue so they take no further work, and lets any job they are running finish -- unlike
+     * {@link #unregisterEndpoint}, which closes workers and so fails what they were running.
+     */
+    private void resizeEndpoint(String address, String queueName, int maxConcurrency) {
+        ActorRef<AiServiceEndpoint> endpointRef = system.getActor(address);
+        if (endpointRef == null) {
+            return;
+        }
+        AiServiceEndpoint.Resized resized = endpointRef.ask(e -> e.resize(maxConcurrency)).join();
+        if (resized.before() == resized.after()) {
+            return;
+        }
+        ActorRef<JobQueue> queue = state.ask(s -> s.get(queueName)).join();
+        if (queue != null) {
+            for (String workerName : resized.retired()) {
+                queue.tell(q -> q.withdraw(workerName)).join();
+            }
+        }
+        LOG.infof("%s: maxConcurrency %d -> %d (queue %s)",
+                address, resized.before(), resized.after(), queueName);
     }
 
     /**

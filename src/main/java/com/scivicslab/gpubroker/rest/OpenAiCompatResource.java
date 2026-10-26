@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
-import com.scivicslab.gpubroker.config.BrokerConfig;
+import com.scivicslab.gpubroker.config.LiveConfig;
 import com.scivicslab.gpubroker.config.ChatQueueName;
 
 import io.smallrye.mutiny.Multi;
@@ -45,14 +45,15 @@ public class OpenAiCompatResource {
     JobQueueRegistry queues;
 
     @Inject
-    BrokerConfig config;
+    LiveConfig config;
 
     /** {@code model} is read from the request body (the same field vLLM itself reads), not a path param. */
     @POST
     @Path("/chat/completions")
     public RestMulti<Buffer> chatCompletions(byte[] rawBody,
                                               @HeaderParam("Content-Type") String contentType,
-                                              @HeaderParam("X-Job-Priority") @DefaultValue("foreground") String priorityHeader) {
+                                              @HeaderParam("X-Job-Priority") @DefaultValue("foreground") String priorityHeader,
+                                              @HeaderParam("X-Submitter-Id") @DefaultValue("unknown") String submitterId) {
         String model = extractModel(rawBody);
         if (model == null || model.isBlank()) {
             return errorResponse(400, "request body must include a \"model\" field");
@@ -64,7 +65,7 @@ public class OpenAiCompatResource {
         if (refusesImage(config.imageInput(), queueName, rawBody)) {
             return errorResponse(400, "model " + model + " does not accept image input");
         }
-        return proxy.submit(queueName, rawBody, contentType, priorityHeader);
+        return proxy.submit(queueName, rawBody, contentType, priorityHeader, submitterId);
     }
 
     /** The embedding model is effectively singular across the broker, so no {@code model}-based routing is needed. */
@@ -72,8 +73,9 @@ public class OpenAiCompatResource {
     @Path("/embeddings")
     public RestMulti<Buffer> embeddings(byte[] rawBody,
                                          @HeaderParam("Content-Type") String contentType,
-                                         @HeaderParam("X-Job-Priority") @DefaultValue("foreground") String priorityHeader) {
-        return proxy.submit(EMBEDDING_QUEUE, rawBody, contentType, priorityHeader);
+                                         @HeaderParam("X-Job-Priority") @DefaultValue("foreground") String priorityHeader,
+                                         @HeaderParam("X-Submitter-Id") @DefaultValue("unknown") String submitterId) {
+        return proxy.submit(EMBEDDING_QUEUE, rawBody, contentType, priorityHeader, submitterId);
     }
 
     /**

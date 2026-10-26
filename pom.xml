@@ -55,6 +55,12 @@
       <artifactId>quarkus-config-yaml</artifactId>
     </dependency>
     <dependency>
+      <!-- Reads broker.capabilities again each poll (CapabilityFile). Already on the classpath
+           through quarkus-config-yaml; named here because the broker now calls it directly. -->
+      <groupId>org.yaml</groupId>
+      <artifactId>snakeyaml</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.scivicslab</groupId>
       <artifactId>pojo-actor</artifactId>
       <version>4.2.0</version>
