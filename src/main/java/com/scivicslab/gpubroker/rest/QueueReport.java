@@ -41,11 +41,18 @@ public record QueueReport(String name, int activeSlots, int idleSlots, int total
      */
     public static QueueReport of(QueueStatus status, QueueHistorySnapshot snapshot, Instant since) {
         QueueSnapshot now = status.snapshot();
+        List<String> registered = registeredAddressesOf(status);
         List<EndpointReport> endpoints = new ArrayList<>();
         for (var entry : snapshot.endpointHistories().entrySet()) {
             String address = entry.getKey();
             List<EndpointBucket> observed = entry.getValue();
             if (since == null) {
+                // Right now, a queue's endpoints are the addresses it would hand a job to. An
+                // address it once had, whose node now serves another model (or nothing), is
+                // history: it stays in the bands and in a `since` report, not in this list.
+                if (!registered.contains(address)) {
+                    continue;
+                }
                 // The finest of the three scales: what is true now, not what the last ten minutes
                 // averaged to (LivenessFromWorkNotOnlyProbes_260920_oo01).
                 com.scivicslab.gpubroker.history.Liveness latest = snapshot.latest().get(address);

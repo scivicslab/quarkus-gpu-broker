@@ -195,4 +195,30 @@ class QueueReportTest {
 
         assertEquals(7, report.completedLastHour());
     }
+
+    /**
+     * A node given another model: the address now answers for the new queue and has left the old
+     * one. Seen live when 192.168.5.16 went from gemma-4 to GLM-5.3-Flash: the gemma queue had
+     * already dropped it from routing, but GET /queues kept listing it there as UP, because the
+     * probe that found GLM was counted into the gemma window and read as the gemma liveness.
+     */
+    @Test
+    void anAddressThatMovedToAnotherQueue_isNoLongerListedOrUpInTheOldOne() {
+        StatusHistoryStore history = new StatusHistoryStore(null);
+        history.record(NOON, List.of(new ProbeObservation("n:8000", "chat-old", true)), List.of());
+        history.record(NOON.plus(Duration.ofMinutes(1)),
+                List.of(new ProbeObservation("n:8000", "chat-new", true)), List.of());
+
+        QueueStatus oldQueue = status("chat-old", List.of(), List.of("m:8000#0"), 0);
+        QueueReport oldReport = QueueReport.of(oldQueue, snapshotOf(oldQueue, history));
+        assertEquals(List.of("m:8000"), oldReport.endpoints().stream().map(EndpointReport::address).toList());
+
+        QueueStatus newQueue = status("chat-new", List.of(), List.of("n:8000#0"), 0);
+        QueueReport newReport = QueueReport.of(newQueue, snapshotOf(newQueue, history));
+        assertEquals("UP", newReport.endpoints().get(0).health());
+        assertEquals(1, newReport.endpoints().get(0).probeTotal(), "the new queue counts only its own probe");
+
+        assertEquals(1, history.endpointHistory("chat-old", "n:8000").get(0).probeTotal(),
+                "the old queue's window keeps only the probe taken while it served the old queue");
+    }
 }

@@ -52,6 +52,9 @@ public class StatusHistoryStore {
     private final ObjectMapper json = new ObjectMapper();
 
     private final Map<String, QueueBucket> openQueueBuckets = new LinkedHashMap<>();
+    /** Endpoint buckets and tallies are keyed by {@link #endpointKey}: one address that changes model
+     *  (its node is given another one) starts a new history under the new queue instead of having
+     *  the new queue's probes counted into the old queue's window. */
     private final Map<String, EndpointBucket> openEndpointBuckets = new LinkedHashMap<>();
     /** Per-minute tallies for the window being filled, thrown away when it closes. */
     private final Map<String, MinuteTally> openQueueMinutes = new LinkedHashMap<>();
@@ -138,10 +141,11 @@ public class StatusHistoryStore {
         openQueueBuckets.put(one.queueName(), queue.plusGeneration(one));
         minutesOf(one.queueName()).add(now, one);
         if (one.address() != null) {
-            EndpointBucket endpoint = openEndpointBuckets.computeIfAbsent(one.address(),
-                    address -> EndpointBucket.empty(address, one.queueName(), openBucketStart));
-            openEndpointBuckets.put(one.address(), endpoint.plusGeneration(one));
-            openEndpointMinutes.computeIfAbsent(one.address(), a -> new MinuteTally(openBucketStart))
+            String key = endpointKey(one.queueName(), one.address());
+            EndpointBucket endpoint = openEndpointBuckets.computeIfAbsent(key,
+                    k -> EndpointBucket.empty(one.address(), one.queueName(), openBucketStart));
+            openEndpointBuckets.put(key, endpoint.plusGeneration(one));
+            openEndpointMinutes.computeIfAbsent(key, k -> new MinuteTally(openBucketStart))
                     .add(now, one);
         }
     }
@@ -166,9 +170,10 @@ public class StatusHistoryStore {
             closeOpenBuckets();
             openBucketStart = bucketStart;
         }
-        EndpointBucket open = openEndpointBuckets.computeIfAbsent(address,
-                a -> EndpointBucket.empty(a, queueName, openBucketStart));
-        openEndpointBuckets.put(address, open.plusWork(ok));
+        String key = endpointKey(queueName, address);
+        EndpointBucket open = openEndpointBuckets.computeIfAbsent(key,
+                k -> EndpointBucket.empty(address, queueName, openBucketStart));
+        openEndpointBuckets.put(key, open.plusWork(ok));
         latest.put(address, new Liveness(address, queueName, ok, Liveness.Source.WORK, now));
     }
 
@@ -199,9 +204,10 @@ public class StatusHistoryStore {
     }
 
     private void accumulateEndpoint(ProbeObservation probe) {
-        EndpointBucket open = openEndpointBuckets.computeIfAbsent(probe.address(),
-                address -> EndpointBucket.empty(address, probe.queueName(), openBucketStart));
-        openEndpointBuckets.put(probe.address(), open.plusProbe(probe.responded()));
+        String key = endpointKey(probe.queueName(), probe.address());
+        EndpointBucket open = openEndpointBuckets.computeIfAbsent(key,
+                k -> EndpointBucket.empty(probe.address(), probe.queueName(), openBucketStart));
+        openEndpointBuckets.put(key, open.plusProbe(probe.responded()));
         latest.put(probe.address(),
                 new Liveness(probe.address(), probe.queueName(), probe.responded(),
                         Liveness.Source.PROBE, lastObservedAt));
@@ -215,12 +221,12 @@ public class StatusHistoryStore {
             lines.add(toLine(closed));
         }
         for (EndpointBucket bucket : openEndpointBuckets.values()) {
-            MinuteTally tally = openEndpointMinutes.get(bucket.address());
+            MinuteTally tally = openEndpointMinutes.get(endpointKey(bucket));
             // No per-address occupancy is observed, so an endpoint's at-full-slots peak stays 0.
             EndpointBucket closed = tally == null ? bucket
                     : bucket.withMinutePeaks(tally.peakTokensPerSecond(),
                             tally.peakTokensPerSecondAtFullSlots(), tally.peakCharactersPerSecond());
-            closedEndpointBuckets.computeIfAbsent(closed.address(), a -> new ArrayDeque<>()).addLast(closed);
+            closedEndpointBuckets.computeIfAbsent(endpointKey(closed), k -> new ArrayDeque<>()).addLast(closed);
             lines.add(toLine(closed));
         }
         openQueueBuckets.clear();
@@ -300,8 +306,18 @@ public class StatusHistoryStore {
      * see {@link #queueHistory} for why this happens and why it must be merged, not appended.</p>
      */
     public List<EndpointBucket> endpointHistory(String address) {
-        List<EndpointBucket> history = new ArrayList<>(closedEndpointBuckets.getOrDefault(address, new ArrayDeque<>()));
-        EndpointBucket open = openEndpointBuckets.get(address);
+        return endpointHistory(lastQueueOf(address), address);
+    }
+
+    /**
+     * Closed liveness buckets for one address while it served one queue, oldest first, plus the
+     * bucket still being filled. An address that served another queue before or after has that
+     * history kept apart, under the other queue.
+     */
+    public List<EndpointBucket> endpointHistory(String queueName, String address) {
+        String key = endpointKey(queueName, address);
+        List<EndpointBucket> history = new ArrayList<>(closedEndpointBuckets.getOrDefault(key, new ArrayDeque<>()));
+        EndpointBucket open = openEndpointBuckets.get(key);
         if (open == null) {
             return history;
         }
@@ -331,12 +347,15 @@ public class StatusHistoryStore {
         addresses.addAll(knownAddresses);
         Map<String, List<EndpointBucket>> endpoints = new LinkedHashMap<>();
         for (String address : addresses) {
-            endpoints.put(address, endpointHistory(address));
+            endpoints.put(address, endpointHistory(queueName, address));
         }
         Map<String, Liveness> now = new LinkedHashMap<>();
         for (String address : addresses) {
             Liveness one = latest.get(address);
-            if (one != null) now.put(address, one);
+            // What was last seen at this address counts for this queue only when it was seen
+            // serving this queue: after the node is given another model, the address answers for
+            // the new queue, and that answer says nothing about the old one.
+            if (one != null && queueName.equals(one.queueName())) now.put(address, one);
         }
         return new QueueHistorySnapshot(queueHistory(queueName), completedLastHour(queueName), endpoints, now);
     }
@@ -365,6 +384,36 @@ public class StatusHistoryStore {
             total += history.get(i).completed();
         }
         return total;
+    }
+
+    private static String endpointKey(String queueName, String address) {
+        return queueName + "\n" + address;
+    }
+
+    private static String endpointKey(EndpointBucket bucket) {
+        return endpointKey(bucket.queueName(), bucket.address());
+    }
+
+    /** The queue this address was last observed serving: its latest liveness, else its newest bucket. */
+    private String lastQueueOf(String address) {
+        Liveness one = latest.get(address);
+        if (one != null) {
+            return one.queueName();
+        }
+        EndpointBucket newest = null;
+        for (Deque<EndpointBucket> buckets : closedEndpointBuckets.values()) {
+            EndpointBucket last = buckets.peekLast();
+            if (last != null && address.equals(last.address())
+                    && (newest == null || last.bucketStart().isAfter(newest.bucketStart()))) {
+                newest = last;
+            }
+        }
+        for (EndpointBucket open : openEndpointBuckets.values()) {
+            if (address.equals(open.address())) {
+                newest = open;
+            }
+        }
+        return newest == null ? "" : newest.queueName();
     }
 
     public static Instant floorToBucket(Instant now) {
@@ -425,7 +474,7 @@ public class StatusHistoryStore {
                     bucketStart, node.path("probeOk").asInt(), node.path("probeTotal").asInt(),
                     node.path("workOk").asInt(), node.path("workFailed").asInt(),
                     generatedOf(node));
-            Deque<EndpointBucket> buckets = closedEndpointBuckets.computeIfAbsent(restored.address(), a -> new ArrayDeque<>());
+            Deque<EndpointBucket> buckets = closedEndpointBuckets.computeIfAbsent(endpointKey(restored), k -> new ArrayDeque<>());
             EndpointBucket sameWindow = removeSameWindow(buckets, restored.bucketStart(), EndpointBucket::bucketStart);
             buckets.addLast(sameWindow == null ? restored : sameWindow.mergedWith(restored));
         }
