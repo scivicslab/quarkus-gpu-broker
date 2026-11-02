@@ -35,6 +35,12 @@ public class VllmChatProbe implements EndpointProbe {
         return 32;   // safety bound, not a performance-tuned value — vLLM's own KV cache admits/queues internally
     }
 
+    /** vLLM's own; Strata and TensorFold, found by the same probe, answer it without the vLLM lines. */
+    @Override
+    public Optional<String> metricsPath() {
+        return Optional.of("/metrics");
+    }
+
     @Override
     public Optional<String> deriveQueueName(String probeResponseBody) {
         return extractModelName(probeResponseBody).map(ChatQueueName::of);

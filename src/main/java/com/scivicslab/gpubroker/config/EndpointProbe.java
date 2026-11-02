@@ -80,6 +80,16 @@ public interface EndpointProbe {
     int defaultMaxConcurrency();
 
     /**
+     * The path where a server of this kind reports, in Prometheus text, when it started, how many
+     * jobs it computes and how many it keeps waiting because it is full, or empty when the kind
+     * reports none of it. The survey reads it to give the server the slots it really takes (see
+     * {@code DeclaredEndpointConcurrency_261103_oo01}).
+     */
+    default Optional<String> metricsPath() {
+        return Optional.empty();
+    }
+
+    /**
      * Probes every {@code nodeIp:conventionalPort()} in parallel and returns an
      * {@link EndpointInfo} (address, queueName, resolved maxConcurrency) for
      * each one that answered as this kind.

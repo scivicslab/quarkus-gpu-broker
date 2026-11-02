@@ -3,6 +3,8 @@ package com.scivicslab.gpubroker.boot;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -10,10 +12,14 @@ import java.util.concurrent.Future;
 
 import org.jboss.logging.Logger;
 
+import com.scivicslab.gpubroker.capacity.EndpointCapacity;
+import com.scivicslab.gpubroker.capacity.ServerRun;
+import com.scivicslab.gpubroker.capacity.ServerRunReader;
 import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.config.EndpointInfo;
 import com.scivicslab.gpubroker.config.EndpointProbe;
 import com.scivicslab.gpubroker.config.LiveConfig;
+import com.scivicslab.pojoactor.core.ActorRef;
 
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
@@ -43,6 +49,12 @@ public class EndpointSurveyor {
     /** Read again whenever the file changes, so an edit to nodes or max-concurrency needs no restart. */
     @Inject
     LiveConfig liveConfig;
+
+    /** The slots each server really takes (see {@code DeclaredEndpointConcurrency_261103_oo01}). */
+    @Inject
+    ActorRef<EndpointCapacity> capacity;
+
+    private final ServerRunReader serverRuns = new ServerRunReader();
 
     /**
      * Every node IP to probe, with each configured CIDR block expanded to its addresses.
@@ -87,6 +99,47 @@ public class EndpointSurveyor {
         } catch (ExecutionException e) {
             LOG.error("endpoint survey failed; continuing with whatever answered", e);
         }
-        return found;
+        return withSlotsTheServersTake(found, capabilities);
+    }
+
+    /**
+     * The same findings, each with the slots its server really takes: for a kind that reports its
+     * state in Prometheus text, the server's {@code /metrics} is read (all servers at once), and
+     * {@link EndpointCapacity#slotsFor} decides from the operator's {@code max-concurrency}, the
+     * start script's declaration, the observation and the kind's default, in that order.
+     */
+    private List<Found> withSlotsTheServersTake(List<Found> found,
+                                                Map<String, BrokerConfig.EndpointCapability> capabilities) {
+        List<Future<Optional<ServerRun>>> runs = new ArrayList<>();
+        try (ExecutorService reads = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (Found f : found) {
+                Optional<String> path = f.probe().metricsPath();
+                String address = f.info().address();
+                runs.add(reads.submit(() -> path.flatMap(p -> serverRuns.read(address, p))));
+            }
+        }
+        List<Found> adjusted = new ArrayList<>(found.size());
+        for (int i = 0; i < found.size(); i++) {
+            Found f = found.get(i);
+            Optional<ServerRun> run;
+            try {
+                run = runs.get(i).get();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                run = Optional.empty();
+            } catch (ExecutionException e) {
+                run = Optional.empty();
+            }
+            EndpointInfo info = f.info();
+            BrokerConfig.EndpointCapability capability = capabilities.get(info.address());
+            OptionalInt override = capability != null ? capability.maxConcurrency() : OptionalInt.empty();
+            int kindDefault = f.probe().defaultMaxConcurrency();
+            Optional<ServerRun> serverRun = run;
+            int slots = capacity.ask(c -> c.slotsFor(info.address(), kindDefault, override, serverRun)).join();
+            adjusted.add(slots == info.maxConcurrency() ? f
+                    : new Found(f.probe(), new EndpointInfo(info.address(), info.queueName(), info.displayName(),
+                                                            slots, info.contextLength())));
+        }
+        return adjusted;
     }
 }
