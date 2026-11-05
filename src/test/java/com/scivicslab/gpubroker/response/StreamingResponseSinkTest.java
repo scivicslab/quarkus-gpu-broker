@@ -31,7 +31,7 @@ class StreamingResponseSinkTest {
     @Test
     void fail_afterStart_leavesTheAlreadyResolvedResponseAlone() {
         UniAssertSubscriber<StreamStart> subscriber = subscribeTo(sink -> {
-            sink.start("application/json");
+            sink.start("application/json", 200);
             sink.fail(new RuntimeException("stream broke mid-flight"));
         });
 
@@ -41,10 +41,19 @@ class StreamingResponseSinkTest {
 
     @Test
     void start_resolvesWithTheGivenContentType() {
-        UniAssertSubscriber<StreamStart> subscriber = subscribeTo(sink -> sink.start("text/event-stream"));
+        UniAssertSubscriber<StreamStart> subscriber = subscribeTo(sink -> sink.start("text/event-stream", 200));
 
         subscriber.awaitItem();
         assertEquals("text/event-stream", subscriber.getItem().contentType());
+    }
+
+    /** A refusal of the server reaches the client as that refusal, not as a 200 carrying an error body. */
+    @Test
+    void start_resolvesWithTheServersStatus() {
+        UniAssertSubscriber<StreamStart> subscriber = subscribeTo(sink -> sink.start("application/json", 400));
+
+        subscriber.awaitItem();
+        assertEquals(400, subscriber.getItem().status());
     }
 
     /** A second terminal signal on the same emitter must not raise — only the first counts. */

@@ -61,7 +61,7 @@ final class LatchAiServiceClient implements AiServiceClient {
         if (failOnRelease.contains(label)) {
             throw new AiServiceCallException("stub failure for " + label);
         }
-        job.responseSink().start("text/plain");
+        job.responseSink().start("text/plain", 200);
         job.responseSink().emit(label.getBytes(StandardCharsets.UTF_8));
         job.responseSink().complete();
     }

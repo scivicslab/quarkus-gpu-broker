@@ -71,9 +71,9 @@ public final class RepetitionStoppingResponseSink implements ResponseSink {
     }
 
     @Override
-    public void start(String contentType) {
+    public void start(String contentType, int status) {
         events = contentType != null && contentType.startsWith("text/event-stream");
-        delegate.start(contentType);
+        delegate.start(contentType, status);
     }
 
     @Override

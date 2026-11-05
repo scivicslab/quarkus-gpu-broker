@@ -6,13 +6,19 @@ import java.io.ByteArrayOutputStream;
 public final class RecordingResponseSink implements ResponseSink {
 
     private String contentType;
+    private int status;
     private final ByteArrayOutputStream body = new ByteArrayOutputStream();
     private boolean completed;
     private Throwable failure;
 
     @Override
-    public void start(String contentType) {
+    public void start(String contentType, int status) {
         this.contentType = contentType;
+        this.status = status;
+    }
+
+    public int status() {
+        return status;
     }
 
     @Override

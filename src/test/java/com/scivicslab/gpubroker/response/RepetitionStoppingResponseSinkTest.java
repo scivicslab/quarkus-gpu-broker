@@ -18,7 +18,7 @@ class RepetitionStoppingResponseSinkTest {
         final List<String> chunks = new ArrayList<>();
         boolean completed;
 
-        @Override public void start(String contentType) { }
+        @Override public void start(String contentType, int status) { }
         @Override public void emit(byte[] chunk) { chunks.add(new String(chunk, StandardCharsets.UTF_8)); }
         @Override public void complete() { completed = true; }
         @Override public void fail(Throwable cause) { }
@@ -35,7 +35,7 @@ class RepetitionStoppingResponseSinkTest {
 
     private static RepetitionStoppingResponseSink watching(Kept kept) {
         RepetitionStoppingResponseSink sink = new RepetitionStoppingResponseSink(kept, "chat-test");
-        sink.start("text/event-stream");
+        sink.start("text/event-stream", 200);
         return sink;
     }
 

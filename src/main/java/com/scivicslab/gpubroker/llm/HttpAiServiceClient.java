@@ -50,7 +50,8 @@ public final class HttpAiServiceClient implements AiServiceClient {
                         "AiServiceEndpoint " + address + path + " returned " + response.statusCode());
             }
             job.responseSink().start(
-                    response.headers().firstValue("content-type").orElse("application/octet-stream"));
+                    response.headers().firstValue("content-type").orElse("application/octet-stream"),
+                    response.statusCode());
             try (InputStream body = response.body()) {
                 relay(body, job);
             }

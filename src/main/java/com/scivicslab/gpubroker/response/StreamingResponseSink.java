@@ -43,9 +43,9 @@ public final class StreamingResponseSink implements ResponseSink {
     }
 
     @Override
-    public void start(String contentType) {
+    public void start(String contentType, int status) {
         startedResolved.set(true);
-        started.complete(new StreamStart(contentType, data));
+        started.complete(new StreamStart(contentType, status, data));
     }
 
     @Override

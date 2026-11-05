@@ -27,7 +27,7 @@ public final class PolledResponseSink implements ResponseSink {
     }
 
     @Override
-    public void start(String contentType) {
+    public void start(String contentType, int status) {
         this.contentType = contentType;
     }
 

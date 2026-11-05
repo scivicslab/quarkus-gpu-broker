@@ -6,6 +6,7 @@ import com.scivicslab.gpubroker.boot.DrainingException;
 import com.scivicslab.gpubroker.boot.JobQueueRegistry;
 import com.scivicslab.gpubroker.config.LiveConfig;
 import com.scivicslab.gpubroker.config.LimitedRequestBody;
+import com.scivicslab.gpubroker.config.ReplayedReasoningBody;
 import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
 import com.scivicslab.gpubroker.model.RequestBody;
@@ -84,7 +85,8 @@ public class ProxyResource {
         // to this method, and a client that names the queue itself posts to it directly. It is
         // therefore the one place a limit can be put that holds for every client
         // (RunawayGenerationLimits_260915_oo01).
-        RequestBody request = LimitedRequestBody.of(new RequestBody(rawBody, contentType),
+        RequestBody request = LimitedRequestBody.of(
+                ReplayedReasoningBody.of(new RequestBody(rawBody, contentType)),
                 config.generationLimitFor(queueName));
         Uni<StreamStart> started = Uni.createFrom().emitter(emitter -> {
             ResponseSink sink = new GenerationMeasuringResponseSink(
@@ -101,7 +103,7 @@ public class ProxyResource {
             });
         });
 
-        return RestMulti.fromUniResponse(started, StreamStart::data, s -> headersOf(s.contentType()), s -> 200);
+        return RestMulti.fromUniResponse(started, StreamStart::data, s -> headersOf(s.contentType()), StreamStart::status);
     }
 
     private MultivaluedMap<String, String> headersOf(String contentType) {

@@ -27,7 +27,7 @@ final class FlakyAiServiceClient implements AiServiceClient {
         if (unhealthyAddresses.contains(address)) {
             throw new AiServiceCallException("stub: " + address + " is unhealthy");
         }
-        job.responseSink().start("text/plain");
+        job.responseSink().start("text/plain", 200);
         job.responseSink().emit(LatchAiServiceClient.label(job).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         job.responseSink().complete();
     }

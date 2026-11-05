@@ -46,7 +46,7 @@ class AdmissionReleasingResponseSinkTest {
                 new AdmissionReleasingResponseSink(new RecordingResponseSink(), releases::incrementAndGet);
 
         sink.dispatched();
-        sink.start("text/plain");
+        sink.start("text/plain", 200);
         sink.complete();
 
         assertEquals(1, releases.get());
@@ -83,7 +83,7 @@ class AdmissionReleasingResponseSinkTest {
         RecordingResponseSink delegate = new RecordingResponseSink();
         AdmissionReleasingResponseSink sink = new AdmissionReleasingResponseSink(delegate, () -> { });
 
-        sink.start("application/json");
+        sink.start("application/json", 200);
         sink.emit("hi".getBytes(StandardCharsets.UTF_8));
         sink.complete();
 

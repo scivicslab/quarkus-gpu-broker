@@ -59,9 +59,8 @@ public class OpenAiCompatResource {
             return errorResponse(400, "request body must include a \"model\" field");
         }
         String queueName = ChatQueueName.of(model);
-        // Refused here, before it is queued, so the client gets a real 400 naming the cause; sent
-        // on, the inference server's own 400 would reach the client as a 200 carrying an error
-        // body (ImageInputTable_261009_oo01).
+        // Refused here, before it is queued, so the client gets a 400 naming the cause in words a
+        // user can act on, not the inference server's own (ImageInputTable_261009_oo01).
         if (refusesImage(config.imageInput(), queueName, rawBody)) {
             return errorResponse(400, "model " + model + " does not accept image input");
         }

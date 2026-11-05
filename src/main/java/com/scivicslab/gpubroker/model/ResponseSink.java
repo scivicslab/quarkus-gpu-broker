@@ -57,8 +57,14 @@ public interface ResponseSink {
     default void servedBy(String address) {
     }
 
-    /** The AiServiceEndpoint's real Content-Type, reported once, before any emit. */
-    void start(String contentType);
+    /**
+     * The AiServiceEndpoint's real Content-Type and HTTP status, reported once, before any emit.
+     *
+     * <p>The status is the server's own: a request it refuses (a 4xx) reaches the client as that
+     * refusal, not as a 200 whose body happens to be an error, which a streaming client reads as an
+     * empty stream and retries.</p>
+     */
+    void start(String contentType, int status);
 
     /** One chunk of the AiServiceEndpoint's response body. */
     void emit(byte[] chunk);

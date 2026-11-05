@@ -20,7 +20,7 @@ class GenerationMeasuringResponseSinkTest {
 
     private static final class Kept implements ResponseSink {
         final List<String> chunks = new ArrayList<>();
-        @Override public void start(String contentType) { }
+        @Override public void start(String contentType, int status) { }
         @Override public void emit(byte[] chunk) { chunks.add(new String(chunk, StandardCharsets.UTF_8)); }
         @Override public void complete() { }
         @Override public void fail(Throwable cause) { }
@@ -40,7 +40,7 @@ class GenerationMeasuringResponseSinkTest {
 
         sink.dispatched();
         sink.servedBy("192.168.5.16:8000");
-        sink.start("text/event-stream");
+        sink.start("text/event-stream", 200);
         sink.emit(event("one "));
         sink.emit(event("two "));
         sink.emit(event("three"));
@@ -62,7 +62,7 @@ class GenerationMeasuringResponseSinkTest {
                 new GenerationMeasuringResponseSink(new Kept(), "chat-test", reported::add);
 
         sink.dispatched();
-        sink.start("text/event-stream");
+        sink.start("text/event-stream", 200);
         // The last chunk of a reply carries an empty delta and the reason it stopped.
         sink.emit("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
                 .getBytes(StandardCharsets.UTF_8));
@@ -123,7 +123,7 @@ class GenerationMeasuringResponseSinkTest {
         GenerationMeasuringResponseSink sink =
                 new GenerationMeasuringResponseSink(new Kept(), "chat-test", reported::add);
         sink.dispatched();
-        sink.start("text/event-stream");
+        sink.start("text/event-stream", 200);
         // Japanese arrives as raw UTF-8, three bytes to the character.
         sink.emit(event("起動時"));
         // And an escape is one character however many bytes it takes.

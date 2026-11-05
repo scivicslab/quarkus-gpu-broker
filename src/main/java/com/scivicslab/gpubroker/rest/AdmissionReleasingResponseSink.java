@@ -42,8 +42,8 @@ final class AdmissionReleasingResponseSink implements ResponseSink {
     }
 
     @Override
-    public void start(String contentType) {
-        delegate.start(contentType);
+    public void start(String contentType, int status) {
+        delegate.start(contentType, status);
     }
 
     @Override
