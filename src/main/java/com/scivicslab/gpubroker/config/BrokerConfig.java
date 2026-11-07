@@ -109,6 +109,13 @@ public interface BrokerConfig {
         /** Overrides {@code EndpointProbe.defaultMaxConcurrency()} for this one instance. Used by {@code Builder}. */
         OptionalInt maxConcurrency();
 
+        /**
+         * How many of this instance's slots FOREGROUND work may hold at once (running or reserved);
+         * the rest are left to BACKGROUND work. Unset: no cap. Read by {@code JobQueue} at every
+         * dispatch, so an edit takes effect without a restart.
+         */
+        OptionalInt foregroundMaxConcurrency();
+
         /** Operator-declared, display-only — not verified against the real service. */
         OptionalInt maxContextLength();
 

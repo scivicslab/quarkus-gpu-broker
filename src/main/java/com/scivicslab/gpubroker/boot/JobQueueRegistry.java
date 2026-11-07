@@ -13,8 +13,10 @@ import com.scivicslab.gpubroker.actor.AiServiceEndpoint;
 import com.scivicslab.gpubroker.actor.AiServiceEndpointBuilder;
 import com.scivicslab.gpubroker.actor.JobQueue;
 import com.scivicslab.gpubroker.actor.ROOT;
+import com.scivicslab.gpubroker.config.BrokerConfig;
 import com.scivicslab.gpubroker.config.EndpointInfo;
 import com.scivicslab.gpubroker.config.EndpointProbe;
+import com.scivicslab.gpubroker.config.LiveConfig;
 import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.QueueStatus;
 import com.scivicslab.pojoactor.core.ActorRef;
@@ -56,6 +58,9 @@ public class JobQueueRegistry {
 
     @Inject
     ActorRef<JobQueueRegistryState> state;
+
+    @Inject
+    LiveConfig liveConfig;
 
     /** Kept past startup so {@link #reconcile} can hang new queues off the same root. */
     private ActorRef<ROOT> root;
@@ -162,7 +167,7 @@ public class JobQueueRegistry {
 
     private void registerEndpoint(EndpointProbe probe, EndpointInfo info) {
         JobQueueRegistryState.Registration registration = state.ask(s ->
-                s.registerQueue(info.queueName(), () -> root.createChild(info.queueName(), new JobQueue()))
+                s.registerQueue(info.queueName(), () -> root.createChild(info.queueName(), new JobQueue(this::foregroundCap)))
         ).join();
         ActorRef<JobQueue> queue = registration.queue();
         if (registration.isNew()) {
@@ -259,5 +264,14 @@ public class JobQueueRegistry {
 
     private boolean allQueuesIdle(List<ActorRef<JobQueue>> allQueues) {
         return allQueues.stream().allMatch(q -> q.ask(JobQueue::isIdle).join());
+    }
+
+    /** An address's {@code foreground-max-concurrency}, or {@link Integer#MAX_VALUE} if it has none. */
+    private int foregroundCap(String address) {
+        BrokerConfig.EndpointCapability capability = liveConfig.capabilities().get(address);
+        if (capability == null) {
+            return Integer.MAX_VALUE;
+        }
+        return capability.foregroundMaxConcurrency().orElse(Integer.MAX_VALUE);
     }
 }

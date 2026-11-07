@@ -149,6 +149,8 @@ class EndpointProbeSurveyTest {
 
     /** Minimal {@code EndpointCapability} stub — only {@code maxConcurrency} is exercised here. */
     private record StubEndpointCapability(int declaredMaxConcurrency) implements BrokerConfig.EndpointCapability {
+        @Override public java.util.OptionalInt foregroundMaxConcurrency() { return java.util.OptionalInt.empty(); }
+
         @Override
         public OptionalInt maxConcurrency() {
             return OptionalInt.of(declaredMaxConcurrency);

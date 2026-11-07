@@ -195,6 +195,7 @@ public class LiveConfig {
             Map<?, ?> fields = mapOf(entry.getValue(), "broker.capabilities." + entry.getKey());
             result.put(String.valueOf(entry.getKey()), new DeclaredCapability(
                     intField(fields, "max-concurrency"),
+                    intField(fields, "foreground-max-concurrency"),
                     intField(fields, "max-context-length"),
                     boolField(fields, "thinking-mode-supported"),
                     boolField(fields, "tool-calling-supported")));
@@ -298,7 +299,8 @@ public class LiveConfig {
     }
 
     /** One host:port's entry as written in the file. */
-    private record DeclaredCapability(OptionalInt maxConcurrency, OptionalInt maxContextLength,
+    private record DeclaredCapability(OptionalInt maxConcurrency, OptionalInt foregroundMaxConcurrency,
+                                      OptionalInt maxContextLength,
                                       Optional<Boolean> thinkingModeSupported,
                                       Optional<Boolean> toolCallingSupported)
             implements BrokerConfig.EndpointCapability {}
