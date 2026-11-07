@@ -167,7 +167,7 @@ public class JobQueueRegistry {
 
     private void registerEndpoint(EndpointProbe probe, EndpointInfo info) {
         JobQueueRegistryState.Registration registration = state.ask(s ->
-                s.registerQueue(info.queueName(), () -> root.createChild(info.queueName(), new JobQueue(this::foregroundCap)))
+                s.registerQueue(info.queueName(), () -> root.createChild(info.queueName(), new JobQueue(this::foregroundWeight)))
         ).join();
         ActorRef<JobQueue> queue = registration.queue();
         if (registration.isNew()) {
@@ -266,12 +266,15 @@ public class JobQueueRegistry {
         return allQueues.stream().allMatch(q -> q.ask(JobQueue::isIdle).join());
     }
 
-    /** An address's {@code foreground-max-concurrency}, or {@link Integer#MAX_VALUE} if it has none. */
-    private int foregroundCap(String address) {
+    /**
+     * An address's {@code foreground-background-slot-ratio}, or 1 if it has none. A value below 1
+     * is taken as 1: a FOREGROUND job never counts as less than a BACKGROUND one.
+     */
+    private double foregroundWeight(String address) {
         BrokerConfig.EndpointCapability capability = liveConfig.capabilities().get(address);
         if (capability == null) {
-            return Integer.MAX_VALUE;
+            return 1;
         }
-        return capability.foregroundMaxConcurrency().orElse(Integer.MAX_VALUE);
+        return Math.max(1, capability.foregroundBackgroundSlotRatio().orElse(1));
     }
 }

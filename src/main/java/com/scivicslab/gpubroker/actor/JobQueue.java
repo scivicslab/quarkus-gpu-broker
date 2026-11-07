@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.function.ToIntFunction;
+import java.util.function.ToDoubleFunction;
 
 import com.scivicslab.gpubroker.model.Job;
 import com.scivicslab.gpubroker.model.Priority;
@@ -50,15 +50,20 @@ import com.scivicslab.pojoactor.core.scheduler.Scheduler;
  * whatever job just arrived, without ever looking at {@link #deque}.
  *
  * <p>An address (the {@code host:port} in front of the {@code #} of an
- * endpointId) may cap how many of its slots FOREGROUND work holds at once:
- * the slots running a FOREGROUND job plus the slots reserved for one
- * ({@code foreground-max-concurrency}, read through {@link #foregroundCap}).
- * A server sized for a few long conversations can so take many more short
- * BACKGROUND jobs. A FOREGROUND job that finds every address at its cap
- * waits at the front of {@link #deque}; meanwhile the BACKGROUND job behind
- * it may take an unreserved idle slot, so the cap does not stall background
- * work. A slot that FOREGROUND work frees goes to a waiting FOREGROUND job
- * first.
+ * endpointId) may count a FOREGROUND job as more than one slot ({@code
+ * foreground-background-slot-ratio}, read through {@link #foregroundWeight}),
+ * so that a server sized for a few long conversations takes many more short
+ * BACKGROUND jobs without running out of memory when both come. The address's
+ * load is its slots running FOREGROUND work times the ratio, plus its slots
+ * running BACKGROUND work, plus its idle slots reserved for FOREGROUND work
+ * (one each: they hold a slot, not memory); a job takes a slot only if the
+ * load with its own share stays within the address's slots. While a
+ * FOREGROUND job waits at the front of {@link #deque}, a BACKGROUND job takes
+ * a slot only if room for that FOREGROUND job is still left after it, so
+ * BACKGROUND work that keeps arriving cannot starve the FOREGROUND job: the
+ * running BACKGROUND jobs finish and the room they leave goes to it. With no
+ * ratio (1), the load never exceeds the slots, which is the behaviour of
+ * before.
  */
 public final class JobQueue {
 
@@ -70,34 +75,35 @@ public final class JobQueue {
     private final Set<String> activeEndpointIds = new HashSet<>();
     private final Map<String, Instant> reservedUntil = new HashMap<>();
     private final Set<String> foregroundBusy = new HashSet<>();
+    private final Set<String> backgroundBusy = new HashSet<>();
     private final Duration reservation;
-    private final ToIntFunction<String> foregroundCap;
+    private final ToDoubleFunction<String> foregroundWeight;
     private long completedTotal;
     private long failedTotal;
     private ActorSystem system;
     private ActorRef<JobQueue> self;
 
     public JobQueue() {
-        this(DEFAULT_RESERVATION, address -> Integer.MAX_VALUE);
+        this(DEFAULT_RESERVATION, address -> 1);
     }
 
     /**
-     * @param foregroundCap an address's {@code foreground-max-concurrency}, or
-     *                      {@link Integer#MAX_VALUE} for an address without one; asked anew at every
-     *                      dispatch, so an edit to the configuration takes effect without a restart
+     * @param foregroundWeight an address's {@code foreground-background-slot-ratio}, or 1 for an
+     *                         address without one; asked anew at every dispatch, so an edit to the
+     *                         configuration takes effect without a restart
      */
-    public JobQueue(ToIntFunction<String> foregroundCap) {
-        this(DEFAULT_RESERVATION, foregroundCap);
+    public JobQueue(ToDoubleFunction<String> foregroundWeight) {
+        this(DEFAULT_RESERVATION, foregroundWeight);
     }
 
     /** Package-visible: lets tests use a short reservation instead of waiting real minutes. */
     JobQueue(Duration reservation) {
-        this(reservation, address -> Integer.MAX_VALUE);
+        this(reservation, address -> 1);
     }
 
-    JobQueue(Duration reservation, ToIntFunction<String> foregroundCap) {
+    JobQueue(Duration reservation, ToDoubleFunction<String> foregroundWeight) {
         this.reservation = reservation;
-        this.foregroundCap = foregroundCap;
+        this.foregroundWeight = foregroundWeight;
     }
 
     /** Bind this actor's own reference; must run before {@link #startReconciliation}. */
@@ -161,8 +167,8 @@ public final class JobQueue {
 
     /**
      * Hands {@link #deque}'s front to an eligible idle endpoint, if any; if the front is a
-     * FOREGROUND job held back by every address's cap, hands the first BACKGROUND job instead.
-     * See {@link #submit}.
+     * FOREGROUND job with no room anywhere, hands the first BACKGROUND job instead where that
+     * still leaves room for it. See {@link #submit}.
      */
     private String dispatchFront(Job justSubmitted) {
         Job next = deque.peekFirst();
@@ -185,8 +191,9 @@ public final class JobQueue {
 
     /** An AiServiceEndpoint wants work. Returns the job to assign, or null (it parks idle). */
     public Job requestWork(String endpointId) {
-        // The job it ran, if any, is over: it no longer counts against its address's cap.
+        // The job it ran, if any, is over: it no longer counts in its address's load.
         foregroundBusy.remove(endpointId);
+        backgroundBusy.remove(endpointId);
         if (!activeEndpointIds.contains(endpointId)) {
             return null;
         }
@@ -206,6 +213,7 @@ public final class JobQueue {
         idleEndpointIds.remove(endpointId);
         reservedUntil.remove(endpointId);
         foregroundBusy.remove(endpointId);
+        backgroundBusy.remove(endpointId);
     }
 
     public Job attach(String endpointId) {
@@ -265,7 +273,7 @@ public final class JobQueue {
         Iterator<String> it = idleEndpointIds.iterator();
         while (it.hasNext()) {
             String endpointId = it.next();
-            if (priority == Priority.BACKGROUND && isReserved(endpointId)) {
+            if (priority == Priority.BACKGROUND && !mayTakeBackground(endpointId)) {
                 continue;
             }
             if (priority == Priority.FOREGROUND && !mayTakeForeground(endpointId)) {
@@ -285,10 +293,10 @@ public final class JobQueue {
         if (front.priority() == Priority.FOREGROUND && mayTakeForeground(endpointId)) {
             return takeFront();
         }
-        if (isReserved(endpointId)) {
+        if (!mayTakeBackground(endpointId)) {
             return null;
         }
-        // The front is BACKGROUND, or FOREGROUND held back by this address's cap.
+        // The front is BACKGROUND, or FOREGROUND with no room on this address yet.
         Job background = front.priority() == Priority.BACKGROUND ? front : firstBackground();
         if (background != null) {
             take(background);
@@ -296,26 +304,58 @@ public final class JobQueue {
         return background;
     }
 
-    /**
-     * Whether a FOREGROUND job may run on this slot: a slot already reserved for FOREGROUND work
-     * is already counted, any other only while its address holds fewer than its cap.
-     */
+    /** Whether a FOREGROUND job may run on this slot: its address has room for the job's share. */
     private boolean mayTakeForeground(String endpointId) {
+        String address = addressOf(endpointId);
+        return loadWithout(endpointId) + foregroundWeight.applyAsDouble(address) <= slotsOf(address);
+    }
+
+    /**
+     * Whether a BACKGROUND job may run on this slot: it is not reserved for FOREGROUND work, its
+     * address has room for one more, and, while a FOREGROUND job waits at the front, room for that
+     * job is still left after this one.
+     */
+    private boolean mayTakeBackground(String endpointId) {
         if (isReserved(endpointId)) {
-            return true;
+            return false;
         }
         String address = addressOf(endpointId);
-        int cap = foregroundCap.applyAsInt(address);
-        if (cap == Integer.MAX_VALUE) {
-            return true;
+        double need = 1;
+        Job front = deque.peekFirst();
+        if (front != null && front.priority() == Priority.FOREGROUND) {
+            need += foregroundWeight.applyAsDouble(address);
         }
-        int held = 0;
+        return loadWithout(endpointId) + need <= slotsOf(address);
+    }
+
+    /** The load of {@code endpointId}'s address, leaving out {@code endpointId} itself (the slot being decided on). */
+    private double loadWithout(String endpointId) {
+        String address = addressOf(endpointId);
+        double weight = foregroundWeight.applyAsDouble(address);
+        double load = 0;
         for (String id : activeEndpointIds) {
-            if (addressOf(id).equals(address) && (foregroundBusy.contains(id) || isReserved(id))) {
-                held++;
+            if (id.equals(endpointId) || !addressOf(id).equals(address)) {
+                continue;
+            }
+            if (foregroundBusy.contains(id)) {
+                load += weight;
+            } else if (backgroundBusy.contains(id) || isReserved(id)) {
+                load += 1;
             }
         }
-        return held < cap;
+        // A reserved slot taking the job holds its slot already; counting it as free here is
+        // right, since the job's own share is added by the caller.
+        return load;
+    }
+
+    private int slotsOf(String address) {
+        int slots = 0;
+        for (String id : activeEndpointIds) {
+            if (addressOf(id).equals(address)) {
+                slots++;
+            }
+        }
+        return slots;
     }
 
     /** The {@code host:port} of a slot named {@code host:port#N}; the whole id if it has no {@code #}. */
@@ -359,11 +399,13 @@ public final class JobQueue {
         return job;
     }
 
-    /** {@code job} has been handed to {@code endpointId}: a FOREGROUND job reserves it and counts against its cap. */
+    /** {@code job} has been handed to {@code endpointId}: it counts in the address's load, and a FOREGROUND job reserves the slot. */
     private void assigned(String endpointId, Job job) {
         if (job.priority() == Priority.FOREGROUND) {
             reservedUntil.put(endpointId, Instant.now().plus(reservation));
             foregroundBusy.add(endpointId);
+        } else {
+            backgroundBusy.add(endpointId);
         }
     }
 

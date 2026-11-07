@@ -87,22 +87,22 @@ class LiveConfigTest {
     }
 
     @Test
-    @DisplayName("reads the foreground cap of an address, and none where it is not written")
-    void parse_readsTheForegroundCap() {
+    @DisplayName("reads the foreground-to-background slot ratio of an address, and none where it is not written")
+    void parse_readsTheSlotRatio() {
         String text = """
                 broker:
                   capabilities:
                     "172.19.17.182:8000":
                       max-concurrency: 64
-                      foreground-max-concurrency: 32
+                      foreground-background-slot-ratio: 2.5
                     "192.168.5.18:8000":
                       max-concurrency: 32
                 """;
         LiveConfig.Snapshot snapshot = LiveConfig.parse(new StringReader(text), Optional.empty());
 
         assertEquals(OptionalInt.of(64), snapshot.capabilities().get("172.19.17.182:8000").maxConcurrency());
-        assertEquals(OptionalInt.of(32), snapshot.capabilities().get("172.19.17.182:8000").foregroundMaxConcurrency());
-        assertEquals(OptionalInt.empty(), snapshot.capabilities().get("192.168.5.18:8000").foregroundMaxConcurrency());
+        assertEquals(OptionalDouble.of(2.5), snapshot.capabilities().get("172.19.17.182:8000").foregroundBackgroundSlotRatio());
+        assertEquals(OptionalDouble.empty(), snapshot.capabilities().get("192.168.5.18:8000").foregroundBackgroundSlotRatio());
     }
 
     @Test

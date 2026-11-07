@@ -110,11 +110,13 @@ public interface BrokerConfig {
         OptionalInt maxConcurrency();
 
         /**
-         * How many of this instance's slots FOREGROUND work may hold at once (running or reserved);
-         * the rest are left to BACKGROUND work. Unset: no cap. Read by {@code JobQueue} at every
-         * dispatch, so an edit takes effect without a restart.
+         * How many slots of this instance one FOREGROUND job counts as, against one for a
+         * BACKGROUND job: a long conversation takes more of the server's memory than a short batch
+         * request. With {@code max-concurrency} 64 and a ratio of 2, the instance runs 32
+         * FOREGROUND jobs, or 64 BACKGROUND ones, or a mix within 64. Unset: 1, every job one slot.
+         * Read by {@code JobQueue} at every dispatch, so an edit takes effect without a restart.
          */
-        OptionalInt foregroundMaxConcurrency();
+        OptionalDouble foregroundBackgroundSlotRatio();
 
         /** Operator-declared, display-only — not verified against the real service. */
         OptionalInt maxContextLength();

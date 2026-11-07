@@ -240,7 +240,7 @@ class StatusPageRendererTest {
 
     private record StubEndpointCapability(Integer declaredMaxContextLength, Boolean declaredThinkingModeSupported,
                                            Boolean declaredToolCallingSupported) implements BrokerConfig.EndpointCapability {
-        @Override public java.util.OptionalInt foregroundMaxConcurrency() { return java.util.OptionalInt.empty(); }
+        @Override public java.util.OptionalDouble foregroundBackgroundSlotRatio() { return java.util.OptionalDouble.empty(); }
 
         @Override
         public OptionalInt maxConcurrency() {
