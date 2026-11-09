@@ -90,7 +90,8 @@ public interface EndpointProbe {
     }
 
     /**
-     * Probes every {@code nodeIp:conventionalPort()} in parallel and returns an
+     * Probes every {@code nodeIp:conventionalPort()} (or the entry as written when it names its
+     * port, see {@link #addressToProbe}) in parallel and returns an
      * {@link EndpointInfo} (address, queueName, resolved maxConcurrency) for
      * each one that answered as this kind.
      */
@@ -99,7 +100,7 @@ public interface EndpointProbe {
         try (ExecutorService probes = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<Optional<EndpointInfo>>> futures = new ArrayList<>();
             for (String nodeIp : nodeIps) {
-                String address = nodeIp + ":" + conventionalPort();
+                String address = addressToProbe(nodeIp);
                 futures.add(probes.submit(() -> probeOne(address, capabilities)));
             }
             for (Future<Optional<EndpointInfo>> future : futures) {
@@ -111,6 +112,16 @@ public interface EndpointProbe {
             throw new IllegalStateException("probe task failed unexpectedly", e);
         }
         return found;
+    }
+
+    /**
+     * The address this kind probes for one entry of {@code broker.nodes}: a plain IP gets this kind's
+     * conventional port; an entry that names its port ({@code 172.19.17.182:8001}, a second server of
+     * a kind on one node) is probed as written, by every kind, and each kind's own checks (probe path,
+     * queue name, request path) decide whether it is that kind.
+     */
+    default String addressToProbe(String node) {
+        return node.indexOf(':') >= 0 ? node : node + ":" + conventionalPort();
     }
 
     private Optional<EndpointInfo> probeOne(String address, Map<String, BrokerConfig.EndpointCapability> capabilities) {

@@ -117,6 +117,31 @@ class EndpointProbeSurveyTest {
                         + "while running an incompatible service, and must not be registered");
     }
 
+    @Test
+    @DisplayName("a node entry that names its port is probed at that port, not the kind's conventional one")
+    void nodeWithPort_isProbedAtThatPort() {
+        int port = server.getAddress().getPort();
+        FakeProbe elsewhere = new FakeProbe(port == 1 ? 2 : 1);   // conventional port: nothing listens there
+
+        List<EndpointInfo> plain = elsewhere.survey(List.of("127.0.0.1"), Map.of());
+        List<EndpointInfo> named = elsewhere.survey(List.of("127.0.0.1:" + port), Map.of());
+
+        assertTrue(plain.isEmpty());
+        assertEquals(1, named.size());
+        assertEquals("127.0.0.1:" + port, named.get(0).address());
+    }
+
+    @Test
+    @DisplayName("a node entry that names its port is still checked as each kind: the wrong kind is not registered")
+    void nodeWithPort_ofAnotherKind_isExcluded() {
+        int port = server.getAddress().getPort();
+        FakeProbe otherKind = new FakeProbe(port == 1 ? 2 : 1, "/no-such-path-on-this-server");
+
+        List<EndpointInfo> found = otherKind.survey(List.of("127.0.0.1:" + port), Map.of());
+
+        assertTrue(found.isEmpty());
+    }
+
     /** A minimal {@code EndpointProbe} whose port is chosen at test time, unlike the real kinds' fixed
      *  ports. {@code requestPathValue} defaults to the same {@code /probe} path {@code probePath()}
      *  uses, so existing tests (which don't care about the {@code requestPath} distinction) are
