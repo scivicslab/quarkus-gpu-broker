@@ -27,8 +27,9 @@ public class JobQueueRegistryState {
 
     private final Map<String, ActorRef<JobQueue>> queues = new HashMap<>();
     private final Map<String, String> displayNames = new HashMap<>();
-    /** queue -> the longest prompt-plus-reply window its endpoints accept; absent when unknown. */
-    private final Map<String, Integer> contextLengths = new HashMap<>();
+    /** address -> the longest prompt-plus-reply window it reported in the latest survey; absent when
+     *  it reported none. A queue's window is computed from these by {@link #contextLengths}. */
+    private final Map<String, Integer> endpointContextLengths = new HashMap<>();
     /** address -> the queue it is currently registered in, so a later survey can tell whether
      *  that address moved to another model (see {@code PeriodicRediscovery_260923_oo01}). */
     private final Map<String, String> endpointQueues = new HashMap<>();
@@ -68,26 +69,40 @@ public class JobQueueRegistryState {
         displayNames.put(queueName, displayName);
     }
 
-    /**
-     * Records this queue's context length. The endpoints of one queue serve the same model and are
-     * expected to agree; when they do not, the smallest wins, because a prompt that fits only the
-     * larger one fails whenever the queue hands it to the other.
-     */
-    public void putContextLength(String queueName, int contextLength) {
-        if (contextLength <= 0) {
-            return;
-        }
-        contextLengths.merge(queueName, contextLength, Math::min);
+    /** Records that {@code address} now serves {@code queueName}, with no context length known. */
+    public void putEndpoint(String address, String queueName) {
+        putEndpoint(address, queueName, 0);
     }
 
-    /** Records that {@code address} now serves {@code queueName}. */
-    public void putEndpoint(String address, String queueName) {
+    /**
+     * Records that {@code address} now serves {@code queueName} and accepts a window of
+     * {@code contextLength} tokens (0 when it did not say and no operator declared one).
+     */
+    public void putEndpoint(String address, String queueName, int contextLength) {
         endpointQueues.put(address, queueName);
+        updateContextLength(address, contextLength);
+    }
+
+    /**
+     * Records the window {@code address} reported in the latest survey, replacing what it reported
+     * before: a value raised or lowered in the configuration counts from the next survey, without a
+     * restart. Does nothing for an address that is not registered.
+     */
+    public void updateContextLength(String address, int contextLength) {
+        if (!endpointQueues.containsKey(address)) {
+            return;
+        }
+        if (contextLength > 0) {
+            endpointContextLengths.put(address, contextLength);
+        } else {
+            endpointContextLengths.remove(address);
+        }
     }
 
     /** Forgets {@code address}; returns the queue it was in, or null if it was not registered. */
     public String removeEndpoint(String address) {
         consecutiveMisses.remove(address);
+        endpointContextLengths.remove(address);
         return endpointQueues.remove(address);
     }
 
@@ -136,7 +151,6 @@ public class JobQueueRegistryState {
     public void removeQueue(String queueName) {
         queues.remove(queueName);
         displayNames.remove(queueName);
-        contextLengths.remove(queueName);
     }
 
     /**
@@ -159,8 +173,17 @@ public class JobQueueRegistryState {
         return List.copyOf(queues.values());
     }
 
+    /**
+     * queue -> the longest prompt-plus-reply window it accepts, computed from the endpoints in it now.
+     * The endpoints of one queue serve the same model and are expected to agree; when they do not,
+     * the smallest wins, because a prompt that fits only the larger one fails whenever the queue
+     * hands it to the other. A queue none of whose endpoints reported a window is absent.
+     */
     public Map<String, Integer> contextLengths() {
-        return byName(contextLengths);
+        Map<String, Integer> byQueue = new HashMap<>();
+        endpointContextLengths.forEach((address, contextLength) ->
+                byQueue.merge(endpointQueues.get(address), contextLength, Math::min));
+        return byName(byQueue);
     }
 
     public Map<String, String> displayNames() {

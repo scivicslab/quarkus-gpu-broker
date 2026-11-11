@@ -13,15 +13,15 @@ class ContextLengthPerQueueTest {
     @Test
     void aQueueCanOnlyPromiseTheSmallestWindowItsEndpointsAccept() {
         JobQueueRegistryState state = new JobQueueRegistryState();
-        state.putContextLength("chat-qwen3.8-flash-next-iq3_xxs", 262144);
-        state.putContextLength("chat-qwen3.8-flash-next-iq3_xxs", 131072);
+        state.putEndpoint("192.168.5.18:8000", "chat-qwen3.8-flash-next-iq3_xxs", 262144);
+        state.putEndpoint("192.168.5.19:8000", "chat-qwen3.8-flash-next-iq3_xxs", 131072);
         assertEquals(Map.of("chat-qwen3.8-flash-next-iq3_xxs", 131072), state.contextLengths());
     }
 
     @Test
     void anUnknownWindowIsAbsentRatherThanZero() {
         JobQueueRegistryState state = new JobQueueRegistryState();
-        state.putContextLength("chat-mystery", 0);
+        state.putEndpoint("192.168.5.20:8000", "chat-mystery", 0);
         assertFalse(state.contextLengths().containsKey("chat-mystery"));
     }
 
@@ -29,7 +29,8 @@ class ContextLengthPerQueueTest {
     void removingAQueueForgetsItsWindow() {
         JobQueueRegistryState state = new JobQueueRegistryState();
         state.registerQueue("chat-gone", () -> null);
-        state.putContextLength("chat-gone", 131072);
+        state.putEndpoint("192.168.5.21:8000", "chat-gone", 131072);
+        state.removeEndpoint("192.168.5.21:8000");
         state.removeQueue("chat-gone");
         assertFalse(state.contextLengths().containsKey("chat-gone"));
     }

@@ -118,13 +118,16 @@ public class JobQueueRegistry {
             registerEndpoint(change.found().probe(), change.found().info());
         }
 
-        // An address that stayed in its queue may still have been given another max-concurrency in
-        // the capabilities file. (An address registered or moved just above was built with the
-        // current value, so it is skipped: its queue differs from the one in the snapshot.)
+        // An address that stayed in its queue may still have been given another max-concurrency or
+        // max-context-length in the capabilities file, or its server may now report another window.
+        // (An address registered or moved just above was recorded with the current values, so it is
+        // skipped: its queue differs from the one in the snapshot.)
         for (EndpointSurveyor.Found f : found) {
             String address = f.info().address();
             if (f.info().queueName().equals(registered.get(address))) {
                 resizeEndpoint(address, f.info().queueName(), f.info().maxConcurrency());
+                int contextLength = f.info().contextLength();
+                state.tell(s -> s.updateContextLength(address, contextLength)).join();
             }
         }
     }
@@ -175,14 +178,12 @@ public class JobQueueRegistry {
             queue.tell(q -> q.bind(system, queue));
             queue.tell(JobQueue::startReconciliation);
         }
-        // Outside the isNew branch: the second endpoint of a queue reports its own window, and the
-        // queue can only promise the smaller of the two.
-        state.tell(s -> s.putContextLength(info.queueName(), info.contextLength()));
         AiServiceEndpoint endpoint = builder.build(info, probe.requestPath());
         ActorRef<AiServiceEndpoint> endpointRef = queue.createChild(info.address(), endpoint);
         endpointRef.tell(e -> e.bind(system, endpointRef));
         endpointRef.tell(AiServiceEndpoint::start);
-        state.tell(s -> s.putEndpoint(info.address(), info.queueName())).join();
+        // Each endpoint's own window is kept; the queue promises the smallest of those in it now.
+        state.tell(s -> s.putEndpoint(info.address(), info.queueName(), info.contextLength())).join();
         LOG.infof("discovered %s at %s -> queue %s (maxConcurrency=%d)",
                 probe.getClass().getSimpleName(), info.address(), info.queueName(), info.maxConcurrency());
     }
