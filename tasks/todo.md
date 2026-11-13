@@ -124,3 +124,11 @@ Pod の入れ替え（再起動）はバッチの完了後に利用者が決め�
 - [x] 手元で本物の jar を起動して確かめた（pod train-dev、本番の broker には触れていない）: 偽の vLLM（1 件 3 秒、種類ごとに同時数を数える）を `max-concurrency: 8`・比 2 で。後回し 30 件を一度に投げ、1 秒後に前景 6 件。後回しは 8 件同時、前景は後回しが終わるのを待って 4 件同時（2.7 秒待ち）、残る前景 2 件はその次。使用量（前景×2＋後回し）の最大は 8 で、総数を超えなかった。前景の待ち時間 5.7 秒×4、8.7 秒×2（うち処理 3 秒）
 - [x] a007 へ配備（2026-11-07 21:55、ユーザー「a007 だけ差し替えましょう」。W206 は走っているジョブを止めないため差し替えない）: 像 `1.2.0-2611072153`（7216c2b の jar を W206 の Kaniko で焼き、registry-copy で a007 の 10.96.0.100:5000 へ）。差し替え前に broker・vLLM とも走行中 0 を確認。ConfigMap に `max-concurrency: 64`・`foreground-background-slot-ratio: 2` を足し、再起動なしで `/queues` が 64 枠に。前景の頼み 1 件が通ることを確認。overlay は k8s-pups-private-overlays 2ba2d91
 - [ ] W206 の broker の差し替え（今走っている読み付けのジョブが終わってから）
+
+## 2026-11-12: 待受口の文脈長の変更を、broker を再起動せずに反映する
+背景: 2026-11-11 に ConfigMap で 5.16 の `max-context-length` を 262,144 から 1,048,576 に上げ、`LiveConfig` も読み直したが、`GET /v1/models` は 262,144 を答え続けた。`reconcile` は同じ待ち行列に残る台に `resizeEndpoint` しか呼ばず、文脈長は最初に見つけたときに `Math::min` で書き足すだけだった（下がる向きにしか動かず、小さい台が外れても戻らない）。2026-10-25 の「範囲外: 登録済みの台の `max-context-length` の更新」を片付ける。
+- [x] `JobQueueRegistryState` が台ごとの文脈長を持ち、待ち行列の値は読むたびに、いまいる台の最小値として計算する。`reconcile` が残った台の値を毎回書き換える（1a9b16d）。設計文書 `PeriodicRediscovery_260923_oo01`（doc_SCIVICS003 c5f9901）
+- [x] 単体試験 `ContextLengthFollowsReconcileTest` 4 本（本物の `onStart` と `reconcile`、走査だけ差し替え）。f803fa0 で 3 本が赤（上げた値・下げた値・小さい台が外れたときに戻らない）、直して全 236 本緑（W206 の Job）
+- [x] 像 `192.168.5.13:32000/quarkus-gpu-broker:1.2.0-2611120147`（W206 の Kaniko、6 ブロブとも実体あり）
+- [x] W206 へ配備（2026-11-13 23:17、ユーザー承認）: 適用直前に `/queues` で走行中 0・待ち 0。Pod `gpu-broker-694bdb77b7-sffk5`（stonefly513）、31 秒で Ready。7 待ち行列、全台 UP、GLM の `max_model_len` 1048576。overlay は k8s-pups-private-overlays 8382a8d
+- [x] 再起動なしの確認: 5.16 を 524288 にした ConfigMap を適用 → 95 秒で `max_model_len` 524288。リポジトリの configmap.yaml を適用し直して → 56 秒で 1048576。Pod の再起動 0。`kubectl diff -k` で差分なし
