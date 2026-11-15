@@ -55,6 +55,12 @@
       <artifactId>quarkus-config-yaml</artifactId>
     </dependency>
     <dependency>
+      <!-- Bearer-token authentication for the management endpoints only (PUT /capacity); see
+           ManagementAuthentication_261115_oo01. Every other endpoint stays open. -->
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-oidc</artifactId>
+    </dependency>
+    <dependency>
       <!-- Reads broker.capabilities again each poll (CapabilityFile). Already on the classpath
            through quarkus-config-yaml; named here because the broker now calls it directly. -->
       <groupId>org.yaml</groupId>
@@ -77,6 +83,12 @@
     <dependency>
       <groupId>io.rest-assured</groupId>
       <artifactId>rest-assured</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <!-- Signs the tokens the management-authentication tests present. -->
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-smallrye-jwt-build</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
