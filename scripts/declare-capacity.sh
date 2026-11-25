@@ -21,7 +21,9 @@
 # Usage: declare-capacity.sh <port> <max-num-seqs> [broker-url]
 #   e.g. nohup ~/declare-capacity.sh 8000 32 > ~/declare-capacity.log 2>&1 &
 # Environment (all optional): GPU_BROKER_CONFIG_DIR (default ~/.config/gpu-broker), KEYCLOAK_TOKEN_URL,
-# TOKEN_ATTEMPTS (default 6), TOKEN_RETRY_SECONDS (default 10), METRICS_WAIT_SECONDS (default 5).
+# TOKEN_ATTEMPTS (default 6), TOKEN_RETRY_SECONDS (default 10), METRICS_WAIT_SECONDS (default 5),
+# START_EPOCH_COMMAND (a command printing the server process's start time in epoch seconds, for
+# servers with no vLLM-style /metrics, e.g. Ollama; it replaces the /metrics poll).
 set -uo pipefail
 port=$1
 max=$2
@@ -65,8 +67,15 @@ fetch_token() {
 }
 
 for _ in $(seq 360); do   # up to 30 minutes, every 5 seconds
-    start=$(curl -s --max-time 5 "http://localhost:$port/metrics" \
-            | awk '/^process_start_time_seconds /{s=$2} /^vllm:num_requests_running/{v=1} END{if (s && v) print s}')
+    if [ -n "${START_EPOCH_COMMAND:-}" ]; then
+        # A server with no vLLM-style /metrics (e.g. Ollama): the start time comes from a command,
+        # whose single output line is the process start in epoch seconds. Empty while the process
+        # the command looks for is not up yet, so the loop waits for it as the metrics path does.
+        start=$($START_EPOCH_COMMAND 2>/dev/null)
+    else
+        start=$(curl -s --max-time 5 "http://localhost:$port/metrics" \
+                | awk '/^process_start_time_seconds /{s=$2} /^vllm:num_requests_running/{v=1} END{if (s && v) print s}')
+    fi
     if [ -n "$start" ]; then
         token=$(fetch_token) || { log "$address: could not get a token; nothing declared"; exit 1; }
         # The token goes to curl as a config on standard input, not as an argument.
