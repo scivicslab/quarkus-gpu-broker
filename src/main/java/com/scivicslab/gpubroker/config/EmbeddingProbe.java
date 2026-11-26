@@ -52,6 +52,7 @@ public class EmbeddingProbe implements EndpointProbe {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("http://" + address + requestPath()))
                 .timeout(PROBE_TIMEOUT)
+                .version(java.net.http.HttpClient.Version.HTTP_1_1)   // the default h2c upgrade makes the e5 server drop the body (422)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString("{\"input\":[\"hello\"]}"))
                 .build();

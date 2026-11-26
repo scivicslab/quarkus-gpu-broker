@@ -68,4 +68,27 @@ class EmbeddingProbeOllamaTest {
         String address = serve(200, "{\"ok\":true}");
         assertTrue(new EmbeddingProbe().survey(List.of(address), Map.of()).isEmpty());
     }
+
+    /**
+     * The real e5large server (uvicorn) loses the body of a request that carries the JDK client's default
+     * {@code Upgrade: h2c} header and answers 422 "body missing" (seen from inside the broker Pod on 2026-11-26,
+     * while curl with the same body got 200). The probe has to ask in HTTP/1.1.
+     */
+    @Test
+    void aServerThatDropsTheBodyOfAnH2cUpgradeRequestIsStillFoundAsAnEmbeddingServer() throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> reply(exchange, 200, "{\"status\":\"ok\"}"));
+        server.createContext("/v1/embeddings", exchange -> {
+            byte[] body = exchange.getRequestBody().readAllBytes();
+            boolean upgrade = exchange.getRequestHeaders().getFirst("Upgrade") != null;
+            if (upgrade || body.length == 0) {
+                reply(exchange, 422, "{\"detail\":[{\"type\":\"missing\"}]}");
+            } else {
+                reply(exchange, 200, "{\"object\":\"list\",\"data\":[{\"embedding\":[0.1]}]}");
+            }
+        });
+        server.start();
+        String address = "127.0.0.1:" + server.getAddress().getPort();
+        assertEquals(1, new EmbeddingProbe().survey(List.of(address), Map.of()).size());
+    }
 }
