@@ -143,7 +143,7 @@ public interface EndpointProbe {
             return Optional.empty();
         }
         Optional<String> queueName = deriveQueueName(response.body());
-        if (queueName.isEmpty() || !requestPathExists(address)) {
+        if (queueName.isEmpty() || !requestPathExists(address) || !answersAsThisKind(address)) {
             return Optional.empty();
         }
         String displayName = deriveDisplayName(response.body()).orElse(queueName.get());
@@ -165,6 +165,15 @@ public interface EndpointProbe {
         }
         BrokerConfig.EndpointCapability capability = capabilities.get(address);
         return capability != null ? capability.maxContextLength().orElse(0) : 0;
+    }
+
+    /**
+     * A second check, after {@link #requestPathExists}, for a kind whose path also exists on servers of other kinds
+     * and which therefore must see the kind's own answer. Default: no further check. A request that does work must
+     * be cheap, since this runs on every server of every survey round.
+     */
+    default boolean answersAsThisKind(String address) {
+        return true;
     }
 
     /**

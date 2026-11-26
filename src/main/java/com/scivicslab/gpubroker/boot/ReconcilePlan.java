@@ -1,8 +1,11 @@
 package com.scivicslab.gpubroker.boot;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * What one round of probing implies for the registry, decided without touching the actor tree.
@@ -32,13 +35,24 @@ public final class ReconcilePlan {
      *         and re-enter the tree on every failure.
      */
     public static List<Change> of(Map<String, String> registered, List<EndpointSurveyor.Found> found) {
-        List<Change> changes = new ArrayList<>();
+        // An address that two kinds claim appears once per kind. It stays where it is registered while any claim
+        // names that queue; otherwise the first claim wins, so it never flips between the queues each round.
+        Map<String, EndpointSurveyor.Found> firstClaim = new LinkedHashMap<>();
+        Set<String> claimsItsRegisteredQueue = new HashSet<>();
         for (EndpointSurveyor.Found f : found) {
-            String nowIn = registered.get(f.info().address());
-            if (f.info().queueName().equals(nowIn)) {
+            String address = f.info().address();
+            firstClaim.putIfAbsent(address, f);
+            if (f.info().queueName().equals(registered.get(address))) {
+                claimsItsRegisteredQueue.add(address);
+            }
+        }
+        List<Change> changes = new ArrayList<>();
+        for (EndpointSurveyor.Found f : firstClaim.values()) {
+            String address = f.info().address();
+            if (claimsItsRegisteredQueue.contains(address)) {
                 continue;
             }
-            changes.add(new Change(f, nowIn));
+            changes.add(new Change(f, registered.get(address)));
         }
         return changes;
     }
